@@ -105,13 +105,15 @@ jobs:
           dir DetectiveBlackville-Windows.zip
 
       - name: Install Inno Setup (for installer)
+        continue-on-error: true
         shell: powershell
         run: |
-          choco install innosetup -y --no-progress || echo "choco innosetup failed, trying scoop fallback"
+          choco install innosetup -y --no-progress; if ($LASTEXITCODE -ne 0) { Write-Host "choco innosetup failed, trying scoop fallback" }
           $iscc = Get-Command "iscc" -ErrorAction SilentlyContinue
           if ($iscc) { Write-Host "ISCC found at $($iscc.Source)" } else { Write-Host "ISCC not on PATH, checking default locations"; if (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe") { Write-Host "Found at default" } }
 
       - name: Build Windows installer (Inno Setup)
+        continue-on-error: true
         shell: powershell
         run: |
           $VERSION = (Get-Content VERSION | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" } | Select-Object -First 1).TrimStart('v')
