@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [0.1.11] — 2026-11-02
+
+### Fixed
+- `OutputDir=..\Output` + убран `cache` у Inno-Setup-Action, verbose ISCC path
+
 ## [0.1.10] — 2026-11-02
 
 ### Fixed

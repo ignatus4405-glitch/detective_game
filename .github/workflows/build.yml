@@ -104,11 +104,9 @@ jobs:
           Compress-Archive -Path $files -DestinationPath DetectiveBlackville-Windows.zip -Force
           dir DetectiveBlackville-Windows.zip
 
-      - name: Install Inno Setup (for installer)
-        continue-on-error: true
+      - name: Install Inno Setup
+        continue-on-error: true (for installer)
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
-        with:
-          cache: true
 
       - name: Build Windows installer (Inno Setup)
         continue-on-error: true
@@ -120,7 +118,9 @@ jobs:
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source }
           if (-not $iscc -or -not (Test-Path $iscc)) { Write-Warning "ISCC not found, skipping installer build"; exit 0 }
+          Write-Host "ISCC path: $iscc"; Get-Item $iscc | Format-List
           & $iscc "/DVERSION=$VERSION" "tools/installer.iss"
+          Write-Host "ISCC exit code: $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { Write-Warning "ISCC failed with $LASTEXITCODE"; exit 0 }
           # Проверяем оба возможных пути (Output в корне и tools/Output из-за OutputDir)
           $instPath = $null
