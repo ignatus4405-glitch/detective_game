@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [0.1.12] — 2026-11-02
+
+### Fixed
+- Исправлены пути `LicenseFile`/`SetupIconFile`/`Source` в `installer.iss` на `..\` — ISCC теперь находит файлы
+
 ## [0.1.11] — 2026-11-02
 
 ### Fixed

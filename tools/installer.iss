@@ -11,7 +11,7 @@
   #define VERSION GetEnv("VERSION")
 #endif
 #if VERSION == ""
-  #define VERSION "0.1.11"
+  #define VERSION "0.1.12"
 #endif
 #define MyAppVersion VERSION
 #define MyAppExe "DetectiveBlackville.exe"
@@ -30,10 +30,10 @@ DisableDirPage=no
 DefaultGroupName=Детектив Блэквил
 DisableProgramGroupPage=no
 AllowNoIcons=yes
-LicenseFile=LICENSE
+LicenseFile=..\LICENSE
 OutputDir=..\Output
 OutputBaseFilename=DetectiveBlackville-Setup-{#MyAppVersion}
-SetupIconFile=src\detective_game\assets\images\icon.ico
+SetupIconFile=..\src\detective_game\assets\images\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExe}
 UninstallDisplayName={#MyAppName}
 Compression=lzma
@@ -64,11 +64,11 @@ Name: "quicklaunchicon"; Description: "Закрепить на панели за
 
 [Files]
 ; Основной exe — onefile сборка
-Source: "dist\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion sign
+Source: "..\dist\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion sign
 ; Доп. файлы если есть
-Source: "dist\README.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme skipifsourcedoesntexist
-Source: "dist\latest.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\dist\README.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme skipifsourcedoesntexist
+Source: "..\dist\latest.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; IconFilename: "{app}\{#MyAppExe}"; Comment: "Нуар-расследование в Блэквиле, 1987"
