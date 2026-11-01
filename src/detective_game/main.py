@@ -275,17 +275,36 @@ class Game:
         sys.exit(0)
 
     def handle_event(self, event):
-        # Глобально: дропдауны настроек
-        if self.screen_name == "settings":
-            # Даем дропдаунам обработать клик первым
+        # Глобально: дропдауны настроек — взаимоисключение и закрытие по клику в пустоту
+        if self.screen_name == "settings" and hasattr(self, "resolution_dropdown"):
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # Проверяем попадание в любой дропдаун или его список
+                def _hit_dd(dd):
+                    if dd.rect.collidepoint(event.pos):
+                        return True
+                    if dd.open:
+                        list_rect = pygame.Rect(dd.rect.x, dd.rect.bottom + 2, dd.rect.w, len(dd.options) * 32)
+                        if list_rect.collidepoint(event.pos):
+                            return True
+                    return False
+                hit_res = _hit_dd(self.resolution_dropdown)
+                hit_mon = _hit_dd(self.monitor_dropdown)
+                if not hit_res and not hit_mon:
+                    # Клик в пустоту — закрыть оба
+                    if self.resolution_dropdown.open or self.monitor_dropdown.open:
+                        self.resolution_dropdown.open = False
+                        self.monitor_dropdown.open = False
+                # Даем дропдаунам обработать клик первым
             if hasattr(self, "resolution_dropdown"):
                 if self.resolution_dropdown.handle_event(event):
                     self._pending_resolution = self.resolution_dropdown.selected
                     self._settings_changed = True
+                    self.monitor_dropdown.open = False
                     return
                 if self.monitor_dropdown.handle_event(event):
                     self._pending_monitor = self.monitor_dropdown.selected
                     self._settings_changed = True
+                    self.resolution_dropdown.open = False
                     return
                 if self.sfx_slider.handle_event(event):
                     self._settings_changed = True
@@ -1610,7 +1629,7 @@ class Game:
         y += 18
         # Обновляем rect дропдаунов под текущую панель
         self.resolution_dropdown.rect = pygame.Rect(left.x + 20, y, left.w - 40, 36)
-        self.resolution_dropdown.draw(self.screen, get_font(11))
+        self.resolution_dropdown.draw(self.screen, get_font(11), draw_list=False)
         # Показываем текущий применённый рядом
         cur_res = tuple(self.settings.get("resolution", [W, H]))
         cur_label = f"{cur_res[0]}×{cur_res[1]}"
@@ -1628,7 +1647,7 @@ class Game:
             mons = [{"id": 0, "name": "Монитор 1 — 1920×1080"}]
         self.monitor_dropdown.rect = pygame.Rect(left.x + 20, y, left.w - 40, 36)
         # Если монитор один — показываем disabled стиль
-        self.monitor_dropdown.draw(self.screen, get_font(11))
+        self.monitor_dropdown.draw(self.screen, get_font(11), draw_list=False)
         if len(mons) == 1:
             tip = font_small.render(
                 "Обнаружен 1 монитор. Подключите второй для выбора.", True, COLOR_TEXT_DARK
@@ -1701,6 +1720,8 @@ class Game:
         if btn_cancel.clicked:
             self._init_settings_widgets()
             self.add_notification("Изменения сброшены")
+        # Оверлей открытых списков — поверх всего левого блока (чтобы не перекрывались контролами)
+        self._draw_dropdown_overlay([self.resolution_dropdown, self.monitor_dropdown])
 
         # --- ПРАВАЯ: Звук ---
         ry = right.y + 50
@@ -1811,6 +1832,46 @@ class Game:
         btn_back.draw(self.screen, get_font(11, bold=True))
         if btn_back.clicked:
             self.screen_name = "menu"
+
+    def _draw_dropdown_overlay(self, dropdowns):
+        # Рисует открытые списки поверх всего (вторая фаза)
+        for dd in dropdowns:
+            if dd.open:
+                # Фон списка
+                list_h = len(dd.options) * 32
+                list_rect = pygame.Rect(dd.rect.x, dd.rect.bottom + 2, dd.rect.w, list_h)
+                # Тень
+                shadow = pygame.Surface((list_rect.w, list_rect.h), 0)
+                shadow.set_alpha(0)
+                # Рисуем тень как полупрозрачный прямоугольник
+                s = pygame.Surface((list_rect.w, list_rect.h), pygame.SRCALPHA)
+                pygame.draw.rect(s, (0, 0, 0, 160), (0, 0, list_rect.w, list_rect.h), border_radius=6)
+                self.screen.blit(s, (list_rect.x + 2, list_rect.y + 2))
+                # Непрозрачный фон списка
+                pygame.draw.rect(self.screen, (32, 32, 42), list_rect, border_radius=6)
+                pygame.draw.rect(self.screen, COLOR_ACCENT if dd.open else COLOR_BORDER, list_rect, width=2, border_radius=6)
+                mouse = pygame.mouse.get_pos()
+                for i, (val, name) in enumerate(dd.options):
+                    opt_rect = pygame.Rect(list_rect.x, list_rect.y + i * 32, list_rect.w, 32)
+                    hovered = opt_rect.collidepoint(mouse)
+                    is_selected = val == dd.selected
+                    if hovered:
+                        pygame.draw.rect(self.screen, COLOR_ACCENT if is_selected else (48, 48, 62), opt_rect, border_radius=4)
+                    elif is_selected:
+                        pygame.draw.rect(self.screen, (48, 42, 28), opt_rect, border_radius=4)
+                    opt_font = get_font(11, bold=is_selected)
+                    # Обрезаем длинные названия
+                    disp = name
+                    if opt_font.size(disp)[0] > opt_rect.w - 36:
+                        while len(disp) > 4 and opt_font.size(disp + "...")[0] > opt_rect.w - 36:
+                            disp = disp[:-1]
+                        disp += "..."
+                    col = COLOR_ACCENT if is_selected else COLOR_TEXT
+                    opt_txt = opt_font.render(disp, True, col)
+                    self.screen.blit(opt_txt, (opt_rect.x + 10, opt_rect.y + (opt_rect.h - opt_txt.get_height()) // 2))
+                    if is_selected:
+                        chk = get_font(10).render("✓", True, COLOR_ACCENT)
+                        self.screen.blit(chk, (opt_rect.right - 20, opt_rect.y + (opt_rect.h - chk.get_height()) // 2))
 
     def draw_update_banner(self):
         if self.update_dismissed or self.screen_name == "settings":
