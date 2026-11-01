@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.12] — 2026-11-02
+
+### Fixed
+- **Критический фикс путей установщика:** `LicenseFile=..\LICENSE`, `SetupIconFile=..\src\…\icon.ico`, `Source: ..\dist\…` в `tools/installer.iss` — теперь ISCC находит файлы при запуске из `tools/` и корректно собирает `DetectiveBlackville-Setup-v0.1.12.exe`; ранее искал в `tools/dist` и падал с `cannot find path`
+
 ## [0.1.11] — 2026-11-02
 
 ### Fixed
@@ -101,7 +106,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.11...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.12...HEAD
+[0.1.12]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.8...v0.1.9
