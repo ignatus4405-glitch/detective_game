@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VER="${{ inputs.version }}"
+          else
+            VER="${GITHUB_REF#refs/tags/v}"
+            # GITHUB_REF is refs/tags/v0.1.0 → strip
+            VER=$(echo "$VER" | sed 's/^v//')
+            # fallback if GITHUB_REF parsing failed (Windows bash)
+            if [ -z "$VER" ] || [ "$VER" = "$GITHUB_REF" ]; then
+              VER=$(cat VERSION | tr -d ' \n\r' | sed 's/^v//')
+            fi
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "tag=v$VER" >> $GITHUB_OUTPUT
+          echo "Release version: $VER"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Build exe
+        run: |
+          pyinstaller --name DetectiveBlackville --onefile --windowed --clean --noconfirm `
+            --add-data "src/detective_game/assets;detective_game/assets" `
+            --add-data "src/detective_game/cases;detective_game/cases" `
+            --hidden-import pygame `
+            --collect-all pygame `
+            src/detective_game/main.py
+          dir dist
+
+      - name: Create release assets
+        shell: bash
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          cat > dist/latest.json <<EOF
+          {
+            "version": "$VERSION",
+            "tag": "v$VERSION",
+            "url": "https://github.com/ignatus4405-glitch/detective_game/releases/tag/v$VERSION",
+            "published_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "notes": "Release $VERSION"
+          }
+          EOF
+          cat dist/latest.json
+          # changelog snippet
+          if [ -f CHANGELOG.md ]; then
+            echo "## CHANGELOG for v$VERSION" > release_notes.md
+            sed -n "/## \[$VERSION\]/,/## \[/p" CHANGELOG.md | head -n 60 >> release_notes.md
+          else
+            echo "Release $VERSION — Детектив: Блэквил" > release_notes.md
+          fi
+          cat release_notes.md
+          Compress-Archive -Path dist/DetectiveBlackville.exe -DestinationPath DetectiveBlackville-Windows.zip -Force
+          Compress-Archive -Path dist/DetectiveBlackville.exe,dist/latest.json -DestinationPath DetectiveBlackville-Full.zip -Force
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: "Детектив: Блэквил v${{ steps.ver.outputs.version }}"
+          body_path: release_notes.md
+          files: |
+            DetectiveBlackville-Windows.zip
+            DetectiveBlackville-Full.zip
+            dist/latest.json
+          generate_release_notes: true
+          draft: false
+          prerelease: false

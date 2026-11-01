@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "arena/*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.11"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff pytest
+          pip install -e .
+
+      - name: Ruff lint
+        run: ruff check src/ tests/
+
+      - name: Run tests
+        run: pytest -v
+
+      - name: Check VERSION sync
+        shell: bash
+        run: |
+          VERSION=$(cat VERSION | tr -d ' \n\r' | sed 's/^v//')
+          PYPROJECT=$(grep -oP 'version = "\K[^"]+' pyproject.toml | head -1)
+          echo "VERSION file: $VERSION"
+          echo "pyproject.toml: $PYPROJECT"
+          if [ "$VERSION" != "$PYPROJECT" ]; then
+            echo "::error::VERSION ($VERSION) != pyproject.toml ($PYPROJECT)"
+            exit 1
+          fi
+          echo "✓ versions in sync: $VERSION"
+
+      - name: Smoke import
+        run: python -c "import detective_game; print(detective_game.__version__)"
