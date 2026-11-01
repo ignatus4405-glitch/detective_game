@@ -1,15 +1,66 @@
 """UI примитивы для нуар-стиля."""
+from pathlib import Path
+
 import pygame
 
 from ..config import *
 
+# Кэш шрифтов для производительности и корректного отображения кириллицы
+_FONT_CACHE = {}
+
+def _get_bundled_font_path(bold=False) -> Path | None:
+    """Возвращает путь к bundled шрифту с поддержкой кириллицы."""
+    # Проверяем несколько возможных путей
+    candidates = [
+        FONTS_DIR / ("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"),
+        Path(__file__).parent.parent / "assets" / "fonts" / ("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"),
+        Path("src/detective_game/assets/fonts") / ("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"),
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    # Системный дежавью как fallback
+    for sys_path in [Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")]:
+        if sys_path.exists():
+            return sys_path
+    return None
 
 def get_font(size, bold=False):
-    # Пробуем системные шрифты, fallback — default
+    """Возвращает шрифт с поддержкой кириллицы, использует bundled DejaVuSans."""
+    key = (size, bold)
+    if key in _FONT_CACHE:
+        return _FONT_CACHE[key]
+    
+    # Пробуем bundled шрифт
+    bundled = _get_bundled_font_path(bold=bold)
+    if bundled and bundled.exists():
+        try:
+            font = pygame.font.Font(str(bundled), size)
+            _FONT_CACHE[key] = font
+            return font
+        except Exception:
+            pass
+    
+    # Пробуем системные шрифты с поддержкой кириллицы
+    for font_name in ["DejaVu Sans", "Noto Sans", "Liberation Sans", "Arial", "Segoe UI"]:
+        try:
+            font = pygame.font.SysFont(font_name, size, bold=bold)
+            # Проверяем что шрифт может отрендерить кириллицу (тестовая проверка)
+            if font:
+                _FONT_CACHE[key] = font
+                return font
+        except Exception:
+            continue
+    
+    # Fallback — дефолтный
     try:
-        return pygame.font.SysFont("Segoe UI", size, bold=bold)
+        font = pygame.font.Font(None, size)
+        _FONT_CACHE[key] = font
+        return font
     except Exception:
-        return pygame.font.Font(None, size)
+        font = pygame.font.SysFont(None, size, bold=bold)
+        _FONT_CACHE[key] = font
+        return font
 
 def draw_panel(surface, rect, color=COLOR_PANEL, border=COLOR_BORDER, radius=8, with_shadow=True):
     if with_shadow:
@@ -117,7 +168,6 @@ class TextInput:
 
 def draw_noir_overlay(surface):
     """Градиент + виньетка для атмосферы."""
-    # subtle vignette
     w, h = surface.get_size()
     vignette = pygame.Surface((w, h), pygame.SRCALPHA)
     for i in range(80):
@@ -125,31 +175,87 @@ def draw_noir_overlay(surface):
         pygame.draw.rect(vignette, (0,0,0, alpha//8), (i, i, w-i*2, h-i*2), width=1, border_radius=12)
     surface.blit(vignette, (0,0))
 
+# Кэш для изображений аватаров
+_AVATAR_CACHE = {}
+
+def _load_avatar_image(avatar_id, size):
+    """Загружает и кэширует изображение аватара, масштабирует под размер."""
+    cache_key = (avatar_id, size[0], size[1])
+    if cache_key in _AVATAR_CACHE:
+        return _AVATAR_CACHE[cache_key]
+    
+    # Пробуем несколько путей
+    candidates = [
+        IMAGES_DIR / f"{avatar_id}.png",
+        Path(__file__).parent.parent / "assets" / "images" / f"{avatar_id}.png",
+        Path(f"src/detective_game/assets/images/{avatar_id}.png"),
+    ]
+    for path in candidates:
+        if path.exists():
+            try:
+                img = pygame.image.load(str(path))
+                # Масштабируем с сохранением пропорций, обрезаем по центру
+                img = pygame.transform.smoothscale(img, size)
+                _AVATAR_CACHE[cache_key] = img
+                return img
+            except Exception:
+                continue
+    return None
+
 def draw_avatar(surface, rect, avatar_data, selected=False):
-    """Рисует аватар-заглушку цветным кругом с инициалом."""
-    color = avatar_data.get("color", (80,80,100))
-    border = COLOR_ACCENT if selected else COLOR_BORDER
-    pygame.draw.rect(surface, color, rect, border_radius=8)
-    pygame.draw.rect(surface, border, rect, width=3 if selected else 1, border_radius=8)
-    # инициал
-    font_big = get_font(28, bold=True)
-    init = avatar_data["name"][0]
-    txt = font_big.render(init, True, (255,255,255))
-    surface.blit(txt, txt.get_rect(center=rect.center))
-    # имя снизу
-    font_small = get_font(11)
-    name_surf = font_small.render(avatar_data["name"], True, COLOR_TEXT)
-    # полупрозрачная плашка
-    bg_rect = pygame.Rect(rect.x, rect.bottom - 18, rect.w, 18)
+    """Рисует аватар — загружает изображение если есть, иначе цветную заглушку."""
+    # Пытаемся загрузить изображение
+    avatar_id = avatar_data.get("id", "")
+    img = _load_avatar_image(avatar_id, (rect.w, rect.h))
+    
+    if img:
+        # Рисуем изображение с закругленными углами
+        # Создаем маску для скругления
+        temp_surf = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+        pygame.draw.rect(temp_surf, (255,255,255,255), (0,0,rect.w,rect.h), border_radius=8)
+        # Накладываем изображение
+        surface.blit(img, rect.topleft)
+        # Рисуем рамку
+        border = COLOR_ACCENT if selected else COLOR_BORDER
+        pygame.draw.rect(surface, border, rect, width=3 if selected else 1, border_radius=8)
+        # Если выбран — подсветка
+        if selected:
+            highlight = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+            pygame.draw.rect(highlight, (212,175,55,30), (0,0,rect.w,rect.h), border_radius=8)
+            surface.blit(highlight, rect.topleft)
+    else:
+        # Fallback — цветная заглушка
+        color = avatar_data.get("color", (80,80,100))
+        border = COLOR_ACCENT if selected else COLOR_BORDER
+        pygame.draw.rect(surface, color, rect, border_radius=8)
+        pygame.draw.rect(surface, border, rect, width=3 if selected else 1, border_radius=8)
+        # инициал
+        font_big = get_font(28, bold=True)
+        init = avatar_data["name"][0]
+        txt = font_big.render(init, True, (255,255,255))
+        surface.blit(txt, txt.get_rect(center=rect.center))
+    
+    # имя снизу — полупрозрачная плашка
+    font_small = get_font(11, bold=True)
+    name_surf = font_small.render(avatar_data["name"], True, (255,255,255))
+    bg_rect = pygame.Rect(rect.x, rect.bottom - 20, rect.w, 20)
     s = pygame.Surface((bg_rect.w, bg_rect.h), pygame.SRCALPHA)
-    pygame.draw.rect(s, (0,0,0,160), (0,0,bg_rect.w, bg_rect.h), border_radius=4)
+    pygame.draw.rect(s, (0,0,0,180), (0,0,bg_rect.w, bg_rect.h), border_radius=4)
     surface.blit(s, bg_rect.topleft)
     surface.blit(name_surf, name_surf.get_rect(center=bg_rect.center))
+    
+    # Индикатор выбора — галочка
+    if selected:
+        check_font = get_font(12, bold=True)
+        check = check_font.render("✓", True, COLOR_ACCENT)
+        # Кружок для галочки
+        pygame.draw.circle(surface, COLOR_ACCENT, (rect.right - 12, rect.y + 12), 10)
+        pygame.draw.circle(surface, (0,0,0), (rect.right - 12, rect.y + 12), 10, width=1)
+        surface.blit(check, check.get_rect(center=(rect.right - 12, rect.y + 12)))
 
 def draw_map_pin(surface, pos, location, visited=False, current=False):
     """Иконка локации на карте."""
     x, y = pos
-    # типы цвета
     type_colors = {
         "hub": (200,180,60),
         "police": (70,100,180),
@@ -169,23 +275,18 @@ def draw_map_pin(surface, pos, location, visited=False, current=False):
     if not visited:
         col = tuple(c//2 for c in col)
     radius = 18 if current else 14
-    # тень
     pygame.draw.circle(surface, (0,0,0,120), (x+3,y+3), radius+2)
     pygame.draw.circle(surface, col, (x,y), radius)
     pygame.draw.circle(surface, (255,255,255) if current else (200,200,200), (x,y), radius, width=2)
     if current:
         pygame.draw.circle(surface, COLOR_ACCENT, (x,y), radius+6, width=2)
-    # visited check
     if visited:
-        # галочка
         font = get_font(12, bold=True)
         txt = font.render("✓", True, (255,255,255))
         surface.blit(txt, (x+8, y-10))
-    # подпись
     font_small = get_font(11, bold=True)
     name = location["name"]
     txt = font_small.render(name, True, COLOR_TEXT if visited else COLOR_TEXT_DIM)
-    # фон подписи
     bg = pygame.Surface((txt.get_width()+8, txt.get_height()+4), pygame.SRCALPHA)
     pygame.draw.rect(bg, (0,0,0,180), (0,0,bg.get_width(), bg.get_height()), border_radius=4)
     surface.blit(bg, (x - bg.get_width()//2, y + radius + 4))

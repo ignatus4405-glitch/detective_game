@@ -6,6 +6,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.6] — 2026-11-02
+
+### Added
+- 6 нуар-портретов детективов (Рейн, Мара, Коул, Вивиан, Шедоу, Лора) — реальные изображения вместо цветных заглушек
+- Bundled шрифт DejaVuSans с поддержкой кириллицы — исправлено отображение 'КАСТОМИЗАЦИЯ', 'ИМЯ ДЕТЕКТИВА' и т.д.
+
+### Fixed
+- Исправлена вёрстка экрана кастомизации: поля не перекрываются, подсказки видны, кнопки 'ПРОШЛОЕ' внутри панели, описание аватара в рамке
+- Синхронизированы координаты кликов аватаров/бэкграундов с новой сеткой 140x140
+- Кэш шрифтов и изображений для производительности
+
 ## [0.1.5] — 2026-11-01
 
 ### Fixed
@@ -51,7 +62,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.2...v0.1.3
