@@ -11,7 +11,7 @@
   #define VERSION GetEnv("VERSION")
 #endif
 #if VERSION == ""
-  #define VERSION "0.1.8"
+  #define VERSION "0.1.9"
 #endif
 #define MyAppVersion VERSION
 #define MyAppExe "DetectiveBlackville.exe"
@@ -31,7 +31,7 @@ DefaultGroupName=Детектив Блэквил
 DisableProgramGroupPage=no
 AllowNoIcons=yes
 LicenseFile=LICENSE
-OutputDir=Output
+OutputDir={#SourcePath}\..\Output
 OutputBaseFilename=DetectiveBlackville-Setup-{#MyAppVersion}
 SetupIconFile=src\detective_game\assets\images\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExe}
