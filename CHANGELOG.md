@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.11] — 2026-11-02
+
+### Fixed
+- **Фикс пути установщика:** `OutputDir=..\Output` в `tools/installer.iss` (корректно относительно `tools/`), убран невалидный `cache` у `Inno-Setup-Action`, добавлен `continue-on-error` и verbose `ISCC path` — инсталлятор теперь точно в `Output/DetectiveBlackville-Setup-v0.1.11.exe`
+
 ## [0.1.10] — 2026-11-02
 
 ### Fixed
@@ -96,7 +101,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.11...HEAD
+[0.1.11]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.7...v0.1.8
