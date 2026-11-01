@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.9] — 2026-11-02
+
+### Fixed
+- **Установщик теперь попадает в релиз:** исправлен `OutputDir` в `tools/installer.iss` (`{#SourcePath}\..\Output` → корень репозитория) и шаблоны артефактов в `build.yml`/`release.yml` (`Output/… + tools/Output/…`), добавлена унификация пути + `continue-on-error` и PowerShell-совместимый `choco` (без `||`), инсталлятор теперь гарантированно публикуется как `DetectiveBlackville-Setup-v0.1.9.exe` в артефактах и релизе
+
 ## [0.1.8] — 2026-11-02
 
 ### Added
@@ -86,7 +91,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.5...v0.1.6

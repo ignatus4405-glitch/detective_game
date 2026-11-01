@@ -124,14 +124,22 @@ jobs:
           if (-not $iscc -or -not (Test-Path $iscc)) { Write-Warning "ISCC not found, skipping installer build"; exit 0 }
           & $iscc "/DVERSION=$VERSION" "tools/installer.iss"
           if ($LASTEXITCODE -ne 0) { Write-Warning "ISCC failed with $LASTEXITCODE"; exit 0 }
-          if (Test-Path "Output/DetectiveBlackville-Setup-$VERSION.exe") {
-            $size = (Get-Item "Output/DetectiveBlackville-Setup-$VERSION.exe").Length / 1MB
-            Write-Host "Installer built: Output/DetectiveBlackville-Setup-$VERSION.exe ($([math]::Round($size,1)) MB)"
+          # Проверяем оба возможных пути (Output в корне и tools/Output из-за OutputDir)
+          $instPath = $null
+          foreach ($cand in @("Output/DetectiveBlackville-Setup-$VERSION.exe", "tools/Output/DetectiveBlackville-Setup-$VERSION.exe")) {
+            if (Test-Path $cand) { $instPath = $cand; break }
+          }
+          if ($instPath) {
+            $size = (Get-Item $instPath).Length / 1MB
+            Write-Host "Installer built: $instPath ($([math]::Round($size,1)) MB)"
+            # Унифицируем: копируем в Output/ для артефакта
+            if ($instPath -ne "Output/DetectiveBlackville-Setup-$VERSION.exe") { New-Item -ItemType Directory -Force -Path Output | Out-Null; Copy-Item $instPath -Destination "Output/DetectiveBlackville-Setup-$VERSION.exe" -Force }
             $hash2 = (Get-FileHash "Output/DetectiveBlackville-Setup-$VERSION.exe" -Algorithm SHA256).Hash
             "$hash2  DetectiveBlackville-Setup-$VERSION.exe" | Out-File -Append -Encoding utf8 dist/SHA256SUMS.txt
           } else {
-            Write-Warning "Installer exe not found in Output/"
+            Write-Warning "Installer exe not found in Output/ or tools/Output/"
             dir Output -ErrorAction SilentlyContinue | Format-Table Name,Length
+            dir tools/Output -ErrorAction SilentlyContinue | Format-Table Name,Length
           }
 
       - name: Upload artifact
@@ -145,7 +153,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: DetectiveBlackville-Installer
-          path: Output/DetectiveBlackville-Setup-*.exe
+          path: |
+            Output/DetectiveBlackville-Setup-*.exe
+            tools/Output/DetectiveBlackville-Setup-*.exe
           if-no-files-found: warn
           retention-days: 30
 
