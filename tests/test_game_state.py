@@ -1,5 +1,5 @@
-import time
-from detective_game.game_state import GameState, DetectiveProfile, AVATARS, BACKGROUNDS
+from detective_game.game_state import AVATARS, BACKGROUNDS, DetectiveProfile, GameState
+
 
 def test_detective_profile_defaults():
     det = DetectiveProfile()

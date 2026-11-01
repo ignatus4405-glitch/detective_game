@@ -1,4 +1,12 @@
-from detective_game.data import BUILTIN_CASES, load_case, list_cases, get_location, get_clue, get_character
+from detective_game.data import (
+    BUILTIN_CASES,
+    get_character,
+    get_clue,
+    get_location,
+    list_cases,
+    load_case,
+)
+
 
 def test_builtin_cases_exist():
     assert len(BUILTIN_CASES) >= 2

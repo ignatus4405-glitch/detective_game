@@ -1,6 +1,7 @@
 """Detective Game: Blackville — нуар-детектив в стиле Код Города."""
 from pathlib import Path
 
+
 def get_version() -> str:
     try:
         version_file = Path(__file__).parent.parent.parent / "VERSION"

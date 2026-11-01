@@ -1,16 +1,15 @@
 """Проверка обновлений через GitHub Releases."""
-import json
 import threading
-import time
-from pathlib import Path
 from typing import Optional, Tuple
+
 try:
     import requests
 except ImportError:
     requests = None
 
-from .config import GITHUB_API_LATEST, GITHUB_RELEASES_URL
 from . import __version__
+from .config import GITHUB_API_LATEST, GITHUB_RELEASES_URL
+
 
 def _parse_version(v: str) -> Tuple[int, ...]:
     v = v.lstrip("vV").strip()

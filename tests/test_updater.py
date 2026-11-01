@@ -1,5 +1,6 @@
 from detective_game.updater import _parse_version, is_newer
 
+
 def test_parse_version():
     assert _parse_version("v0.1.0") == (0,1,0)
     assert _parse_version("1.2.3") == (1,2,3)

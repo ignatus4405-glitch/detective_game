@@ -1,8 +1,8 @@
-import tempfile
-import json
 from pathlib import Path
-from detective_game.game_state import GameState, DetectiveProfile
+
+from detective_game.game_state import DetectiveProfile, GameState
 from detective_game.save_system import get_save_dir
+
 
 def test_save_dir_exists():
     # get_save_dir should return a Path

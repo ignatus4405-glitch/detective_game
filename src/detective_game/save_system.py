@@ -4,8 +4,10 @@ import os
 import sys
 from pathlib import Path
 from typing import Optional
-from .config import SAVE_FILE, SETTINGS_FILE, DETECTIVE_FILE, SAVE_DIR_NAME
-from .game_state import GameState, DetectiveProfile
+
+from .config import DETECTIVE_FILE, SAVE_DIR_NAME, SAVE_FILE, SETTINGS_FILE
+from .game_state import DetectiveProfile, GameState
+
 
 def get_save_dir() -> Path:
     """Определяем директорию сохранения в зависимости от ОС."""

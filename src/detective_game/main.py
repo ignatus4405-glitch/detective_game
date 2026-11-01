@@ -1,15 +1,33 @@
 """Главный цикл игры — все экраны."""
-import pygame
 import sys
-import os
 import time
-from pathlib import Path
+
+import pygame
+
 from .config import *
-from .game_state import GameState, DetectiveProfile, AVATARS, BACKGROUNDS
-from .data import load_case, list_cases, get_location, get_clue, get_character
-from .save_system import save_game, load_game, has_save, delete_save, save_detective, load_detective, save_settings, load_settings, get_save_dir
+from .data import get_clue, get_location, list_cases, load_case
+from .game_state import AVATARS, BACKGROUNDS, DetectiveProfile, GameState
+from .save_system import (
+    delete_save,
+    get_save_dir,
+    has_save,
+    load_detective,
+    load_game,
+    load_settings,
+    save_detective,
+    save_game,
+    save_settings,
+)
+from .ui.widgets import (
+    Button,
+    TextInput,
+    draw_avatar,
+    draw_map_pin,
+    draw_panel,
+    draw_text_wrapped,
+    get_font,
+)
 from .updater import UpdateChecker
-from .ui.widgets import get_font, draw_panel, draw_text_wrapped, Button, TextInput, draw_avatar, draw_map_pin, draw_noir_overlay
 
 pygame.init()
 
@@ -679,7 +697,7 @@ class Game:
                         self.state.collected_clues.add(clue["id"])
                         # разблокируем новые локации
                         for nid in clue.get("leads_to", []):
-                            self.add_notification(f"Новая локация открыта!")
+                            self.add_notification("Новая локация открыта!")
                         # время +10 мин
                         self.state.case_time_minutes += 10
                         save_game(self.state)

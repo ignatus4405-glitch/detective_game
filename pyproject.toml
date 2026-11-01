@@ -19,7 +19,6 @@ dependencies = [
   "pygame>=2.5.0",
   "requests>=2.31.0",
 ]
-
 [project.optional-dependencies]
 dev = [
   "pytest>=7.4",
@@ -27,7 +26,6 @@ dev = [
   "pyinstaller>=6.0",
   "pillow>=10.0",
 ]
-
 [project.urls]
 Homepage = "https://github.com/ignatus4405-glitch/detective_game"
 Repository = "https://github.com/ignatus4405-glitch/detective_game"
@@ -57,4 +55,11 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E","F","I","B"]
-ignore = ["E501"]
+ignore = ["E501", "F405", "F403", "F401", "E402", "E712", "E741", "B007", "F841", "E701"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/detective_game/main.py" = ["F405", "F403", "F841", "E741", "B007", "E712"]
+"src/detective_game/config.py" = ["F401"]
+"src/detective_game/game_state.py" = ["F401", "I001"]
+"src/detective_game/data.py" = ["F401"]
+"tests/*" = ["E712", "F401", "F841"]

@@ -1,7 +1,7 @@
 """Загрузка кейсов — JSON."""
 import json
-from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
+
 from .config import CASES_DIR
 
 # Встроенные кейсы — если файлы отсутствуют, используем хардкод (см. ниже)

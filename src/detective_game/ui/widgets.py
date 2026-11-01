@@ -1,6 +1,8 @@
 """UI примитивы для нуар-стиля."""
 import pygame
+
 from ..config import *
+
 
 def get_font(size, bold=False):
     # Пробуем системные шрифты, fallback — default
