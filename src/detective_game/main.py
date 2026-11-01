@@ -57,7 +57,7 @@ class Game:
         self.prev_screen = "menu"
         self.selected_avatar = 0
         self.selected_bg = self.state.detective.background
-        self.name_input = TextInput((WINDOW_WIDTH//2-200, 320, 400, 48), placeholder="Введите имя детектива...", text=self.state.detective.name)
+        self.name_input = TextInput((55, 115, 1170, 42), placeholder="Введите имя детектива... Например: Алекс Рейн", text=self.state.detective.name)
         # на аватар индекс
         for i, av in enumerate(AVATARS):
             if av["id"] == self.state.detective.avatar_id:
@@ -125,18 +125,29 @@ class Game:
         if self.screen_name == "customization":
             self.name_input.handle_event(event)
             if event.type == pygame.MOUSEBUTTONDOWN:
-                # avatar clicks
+                # avatar clicks — синхронизировано с draw_customization layout
+                panel = pygame.Rect(30, 75, WINDOW_WIDTH-60, 620)
+                avatar_w, avatar_h = 140, 140
+                gap_x, gap_y = 25, 15
+                total_w = 3*avatar_w + 2*gap_x
+                start_x = panel.x + (panel.w - total_w)//2
+                start_y = panel.y + 160
                 for i in range(len(AVATARS)):
                     col = i % 3
                     row = i // 3
-                    x = WINDOW_WIDTH//2 - 210 + col*140
-                    y = 400 + row*110
-                    rect = pygame.Rect(x, y, 120, 90)
+                    x = start_x + col*(avatar_w+gap_x)
+                    y = start_y + row*(avatar_h+gap_y)
+                    rect = pygame.Rect(x, y, avatar_w, avatar_h)
                     if rect.collidepoint(event.pos):
                         self.selected_avatar = i
-                # background clicks
+                # background clicks — синхронизировано с draw_customization
+                past_y = start_y + 2*(avatar_h+gap_y) + 15 + 28 + 15  # desc_rect.bottom +15
+                bg_y = past_y + 22
+                btn_w, btn_h = 150, 36
+                total_bg_w = 3*btn_w + 2*15
+                bg_start_x = panel.x + (panel.w - total_bg_w)//2
                 for i, bg in enumerate(BACKGROUNDS):
-                    rect = pygame.Rect(WINDOW_WIDTH//2 - 250 + i*170, 640, 150, 40)
+                    rect = pygame.Rect(bg_start_x + i*(btn_w+15), bg_y, btn_w, btn_h)
                     if rect.collidepoint(event.pos):
                         self.selected_bg = bg["id"]
         elif self.screen_name == "map":
@@ -307,61 +318,97 @@ class Game:
         self.screen.blit(quote, quote.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT-20)))
 
     def draw_customization(self):
-        font_title = get_font(28, bold=True)
-        font_sub = get_font(16)
-        font_btn = get_font(16, bold=True)
-        # header
-        header_rect = pygame.Rect(30, 20, WINDOW_WIDTH-60, 60)
+        font_title = get_font(26, bold=True)
+        font_sub = get_font(14, bold=True)
+        font_hint = get_font(11)
+        font_btn = get_font(14, bold=True)
+        # header — компактнее
+        header_rect = pygame.Rect(30, 15, WINDOW_WIDTH-60, 50)
         draw_panel(self.screen, header_rect)
         title = font_title.render("КАСТОМИЗАЦИЯ ДЕТЕКТИВА", True, COLOR_ACCENT)
-        self.screen.blit(title, title.get_rect(center=(WINDOW_WIDTH//2, 50)))
-        # панель имени
-        panel = pygame.Rect(30, 100, WINDOW_WIDTH-60, 600)
+        self.screen.blit(title, title.get_rect(center=(WINDOW_WIDTH//2, 40)))
+        # панель — увеличена, с внутренними отступами
+        panel = pygame.Rect(30, 75, WINDOW_WIDTH-60, 620)
         draw_panel(self.screen, panel)
-        label = font_sub.render("ИМЯ ДЕТЕКТИВА", True, COLOR_TEXT_DIM)
-        self.screen.blit(label, (panel.x+30, panel.y+20))
-        self.name_input.draw(self.screen, get_font(18))
-        # подсказка
-        hint = get_font(12).render("Имя будет использоваться в диалогах и досье. Можно ввести на русском.", True, COLOR_TEXT_DARK)
-        self.screen.blit(hint, (panel.x+30, panel.y+80))
-        # выбор аватара
-        label2 = font_sub.render("ВЫБЕРИТЕ ОБРАЗ", True, COLOR_TEXT_DIM)
-        self.screen.blit(label2, (panel.x+30, panel.y+110))
+        
+        # --- Секция 1: Имя (верх, 80px) ---
+        label = font_sub.render("ИМЯ ДЕТЕКТИВА", True, COLOR_ACCENT)
+        self.screen.blit(label, (panel.x+25, panel.y+15))
+        # Поле ввода — центрировано, шире
+        self.name_input.rect = pygame.Rect(panel.x+25, panel.y+40, panel.w-50, 42)
+        self.name_input.draw(self.screen, get_font(16))
+        hint = font_hint.render("Имя будет использоваться в диалогах и досье. Можно ввести на русском.", True, COLOR_TEXT_DARK)
+        self.screen.blit(hint, (panel.x+25, panel.y+88))
+        
+        # Разделитель
+        pygame.draw.line(self.screen, COLOR_BORDER, (panel.x+25, panel.y+108), (panel.right-25, panel.y+108), 1)
+        
+        # --- Секция 2: Выбор образа (центр) ---
+        label2 = font_sub.render("ВЫБЕРИТЕ ОБРАЗ", True, COLOR_ACCENT)
+        self.screen.blit(label2, (panel.x+25, panel.y+120))
+        # Подсказка
+        sub_hint = font_hint.render("Нажмите на портрет чтобы выбрать", True, COLOR_TEXT_DARK)
+        self.screen.blit(sub_hint, (panel.x+25, panel.y+138))
+        
+        # Сетка аватаров — 3x2, компактная, центрирована
+        avatar_w, avatar_h = 140, 140
+        gap_x, gap_y = 25, 15
+        total_w = 3*avatar_w + 2*gap_x
+        start_x = panel.x + (panel.w - total_w)//2
+        start_y = panel.y + 160
+        
         for i, av in enumerate(AVATARS):
             col = i % 3
             row = i // 3
-            x = WINDOW_WIDTH//2 - 210 + col*140
-            y = 400 + row*110
-            rect = pygame.Rect(x, y, 120, 90)
+            x = start_x + col*(avatar_w+gap_x)
+            y = start_y + row*(avatar_h+gap_y)
+            rect = pygame.Rect(x, y, avatar_w, avatar_h)
             draw_avatar(self.screen, rect, av, selected=(i==self.selected_avatar))
-            if i == self.selected_avatar:
-                desc = get_font(12).render(av["desc"], True, COLOR_ACCENT)
-                self.screen.blit(desc, desc.get_rect(center=(WINDOW_WIDTH//2, 640-20)))
-        # бэкграунд
-        label3 = font_sub.render("ПРОШЛОЕ", True, COLOR_TEXT_DIM)
-        self.screen.blit(label3, (panel.x+30, panel.y+540))
+        
+        # Описание выбранного — под сеткой, в рамке
+        selected_av = AVATARS[self.selected_avatar]
+        desc_rect = pygame.Rect(panel.x+25, start_y + 2*(avatar_h+gap_y) + 15, panel.w-50, 28)
+        draw_panel(self.screen, desc_rect, color=(32,28,40), border=COLOR_ACCENT_DIM, radius=6, with_shadow=False)
+        desc_text = f"{selected_av['name']} — {selected_av['desc']}"
+        desc_font = get_font(11)
+        desc_surf = desc_font.render(desc_text, True, COLOR_ACCENT)
+        self.screen.blit(desc_surf, desc_surf.get_rect(center=desc_rect.center))
+        
+        # --- Секция 3: Прошлое (низ) ---
+        past_y = desc_rect.bottom + 15
+        label3 = font_sub.render("ПРОШЛОЕ", True, COLOR_ACCENT)
+        self.screen.blit(label3, (panel.x+25, past_y))
+        
+        btn_w, btn_h = 150, 36
+        total_bg_w = 3*btn_w + 2*15
+        bg_start_x = panel.x + (panel.w - total_bg_w)//2
+        bg_y = past_y + 22
+        
         for i, bg in enumerate(BACKGROUNDS):
-            rect = pygame.Rect(WINDOW_WIDTH//2 - 250 + i*170, 640, 150, 40)
+            rect = pygame.Rect(bg_start_x + i*(btn_w+15), bg_y, btn_w, btn_h)
             is_sel = bg["id"] == self.selected_bg
             col = COLOR_ACCENT if is_sel else COLOR_PANEL_LIGHT
             tcol = (10,10,10) if is_sel else COLOR_TEXT
-            pygame.draw.rect(self.screen, col, rect, border_radius=6)
-            pygame.draw.rect(self.screen, COLOR_ACCENT if is_sel else COLOR_BORDER, rect, width=2 if is_sel else 1, border_radius=6)
-            font = get_font(13, bold=True)
+            pygame.draw.rect(self.screen, col, rect, border_radius=8)
+            pygame.draw.rect(self.screen, COLOR_ACCENT if is_sel else COLOR_BORDER, rect, width=2 if is_sel else 1, border_radius=8)
+            font = get_font(12, bold=True)
             txt = font.render(bg["icon"]+" "+bg["label"], True, tcol)
             self.screen.blit(txt, txt.get_rect(center=rect.center))
-        # описание бэкграунда
+        
+        # описание бэкграунда — под кнопками
         bg_desc_map = {
-            "private_eye": "Умеет находить общий язык с улицей. + реплики со свидетелями.",
-            "ex_cop": "Связи в полиции. Видит детали в протоколах.",
-            "reporter": "Острый глаз и умение разговорить любого.",
+            "private_eye": "Умеет находить общий язык с улицей. +1 к доверию свидетелей.",
+            "ex_cop": "Связи в полиции. Видит скрытые детали в протоколах.",
+            "reporter": "Острый глаз и умение разговорить любого собеседника.",
         }
         desc_text = bg_desc_map.get(self.selected_bg, "")
-        desc_surf = get_font(12).render(desc_text, True, COLOR_TEXT_DIM)
-        self.screen.blit(desc_surf, desc_surf.get_rect(center=(WINDOW_WIDTH//2, 690)))
-        # кнопки
-        btn_back = Button((panel.x+20, panel.bottom-50, 180, 40), "← НАЗАД")
-        btn_save = Button((panel.right-200, panel.bottom-50, 180, 40), "СОХРАНИТЬ", accent=True)
+        bg_hint_rect = pygame.Rect(panel.x+25, bg_y+45, panel.w-50, 18)
+        bg_hint = font_hint.render(desc_text, True, COLOR_TEXT_DIM)
+        self.screen.blit(bg_hint, bg_hint.get_rect(center=bg_hint_rect.center))
+        
+        # кнопки — внизу панели, с отступом
+        btn_back = Button((panel.x+25, panel.bottom-42, 160, 36), "← НАЗАД")
+        btn_save = Button((panel.right-175, panel.bottom-42, 150, 36), "СОХРАНИТЬ", accent=True)
         mouse = pygame.mouse.get_pos()
         pressed = pygame.mouse.get_pressed()[0]
         for btn, action in [(btn_back, "back"), (btn_save, "save")]:
