@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.10] — 2026-11-02
+
+### Fixed
+- **Инсталлятор собирается надёжно:** заменён `choco install innosetup` на `Minionguyjpro/Inno-Setup-Action@v1.2.2` (кэш, проверенный путь `ISCC.exe`), теперь `Build Windows installer` стабильно находит ISCC и публикует `DetectiveBlackville-Setup-v0.1.10.exe` в артефактах и релизе
+
 ## [0.1.9] — 2026-11-02
 
 ### Fixed
@@ -91,7 +96,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.6...v0.1.7
