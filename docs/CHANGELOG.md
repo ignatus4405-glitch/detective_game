@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-11-01
+
+### Fixed
+- Починил CI: ruff, build/release установка пакета, PyInstaller
+- Добавлены скриншоты меню и карты
+
 ### Planned
 - Звуки и музыка (pygame.mixer)
 - Сетевой hot-seat / WebSocket для команд

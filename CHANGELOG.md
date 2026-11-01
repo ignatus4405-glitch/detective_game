@@ -6,6 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-11-01
+
+### Fixed
+- Починил CI: настроен ruff, исправлены импорты, добавлена установка пакета в build/release
+- Build теперь проходит на Windows (PyInstaller + тесты)
+
 ## [0.1.0] — 2026-11-01
 
 ### Added
@@ -22,5 +28,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ignatus4405-glitch/detective_game/releases/tag/v0.1.0
+[0.1.1]: https://github.com/ignatus4405-glitch/detective_game/releases/tag/v0.1.1
