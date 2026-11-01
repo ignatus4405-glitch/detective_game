@@ -315,7 +315,7 @@ class Dropdown:
                     self.open = False
         return False
 
-    def draw(self, surface, font):
+    def draw(self, surface, font, draw_list=True):
         # Label
         if self.label:
             lbl_font = get_font(11, bold=True)
@@ -328,8 +328,16 @@ class Dropdown:
         pygame.draw.rect(surface, bg, self.rect, border_radius=6)
         pygame.draw.rect(surface, border, self.rect, width=2 if self.open else 1, border_radius=6)
         
-        # Текст
-        txt = font.render(self.get_display(), True, COLOR_TEXT)
+        # Текст — обрезаем если не влезает
+        disp = self.get_display()
+        txt_font = font
+        # Подгоняем чтобы влезло в rect.w - 30 (10 паддинг + 20 стрелка)
+        max_w = self.rect.w - 30
+        if txt_font.size(disp)[0] > max_w:
+            while len(disp) > 2 and txt_font.size(disp + "...")[0] > max_w:
+                disp = disp[:-1]
+            disp = disp + "..."
+        txt = txt_font.render(disp, True, COLOR_TEXT)
         surface.blit(txt, (self.rect.x+10, self.rect.y + (self.rect.h - txt.get_height())//2))
         
         # Стрелка
@@ -338,8 +346,8 @@ class Dropdown:
         arr = arr_font.render(arrow, True, COLOR_TEXT_DIM)
         surface.blit(arr, (self.rect.right - 20, self.rect.y + (self.rect.h - arr.get_height())//2))
         
-        # Выпадающий список
-        if self.open:
+        # Выпадающий список — рисуем только если draw_list=True, иначе отложено (overlay)
+        if self.open and draw_list:
             list_h = len(self.options) * 32
             list_rect = pygame.Rect(self.rect.x, self.rect.bottom + 2, self.rect.w, list_h)
             # Тень
