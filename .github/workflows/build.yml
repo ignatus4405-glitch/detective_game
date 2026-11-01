@@ -104,11 +104,47 @@ jobs:
           Compress-Archive -Path $files -DestinationPath DetectiveBlackville-Windows.zip -Force
           dir DetectiveBlackville-Windows.zip
 
+      - name: Install Inno Setup (for installer)
+        shell: powershell
+        run: |
+          choco install innosetup -y --no-progress || echo "choco innosetup failed, trying scoop fallback"
+          $iscc = Get-Command "iscc" -ErrorAction SilentlyContinue
+          if ($iscc) { Write-Host "ISCC found at $($iscc.Source)" } else { Write-Host "ISCC not on PATH, checking default locations"; if (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe") { Write-Host "Found at default" } }
+
+      - name: Build Windows installer (Inno Setup)
+        shell: powershell
+        run: |
+          $VERSION = (Get-Content VERSION | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" } | Select-Object -First 1).TrimStart('v')
+          Write-Host "Building installer for v$VERSION"
+          $env:VERSION = $VERSION
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source }
+          if (-not $iscc -or -not (Test-Path $iscc)) { Write-Warning "ISCC not found, skipping installer build"; exit 0 }
+          & $iscc "/DVERSION=$VERSION" "tools/installer.iss"
+          if ($LASTEXITCODE -ne 0) { Write-Warning "ISCC failed with $LASTEXITCODE"; exit 0 }
+          if (Test-Path "Output/DetectiveBlackville-Setup-$VERSION.exe") {
+            $size = (Get-Item "Output/DetectiveBlackville-Setup-$VERSION.exe").Length / 1MB
+            Write-Host "Installer built: Output/DetectiveBlackville-Setup-$VERSION.exe ($([math]::Round($size,1)) MB)"
+            $hash2 = (Get-FileHash "Output/DetectiveBlackville-Setup-$VERSION.exe" -Algorithm SHA256).Hash
+            "$hash2  DetectiveBlackville-Setup-$VERSION.exe" | Out-File -Append -Encoding utf8 dist/SHA256SUMS.txt
+          } else {
+            Write-Warning "Installer exe not found in Output/"
+            dir Output -ErrorAction SilentlyContinue | Format-Table Name,Length
+          }
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: DetectiveBlackville-Windows
           path: DetectiveBlackville-Windows.zip
+          retention-days: 30
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: DetectiveBlackville-Installer
+          path: Output/DetectiveBlackville-Setup-*.exe
+          if-no-files-found: warn
           retention-days: 30
 
       - name: Upload latest.json

@@ -135,6 +135,29 @@ jobs:
           Compress-Archive -Path $files2 -DestinationPath DetectiveBlackville-Full.zip -Force
           dir *.zip
 
+      - name: Install Inno Setup
+        shell: powershell
+        run: |
+          choco install innosetup -y --no-progress || Write-Host "choco failed, check ISCC path"
+          if (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe") { Write-Host "Inno Setup installed" }
+
+      - name: Build installer
+        shell: powershell
+        run: |
+          $VERSION="${{ steps.ver.outputs.version }}"
+          $env:VERSION=$VERSION
+          $iscc="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { $iscc=(Get-Command iscc -ErrorAction SilentlyContinue).Source }
+          if (-not $iscc -or -not (Test-Path $iscc)) { Write-Warning "ISCC not found, skip installer"; exit 0 }
+          & $iscc "/DVERSION=$VERSION" "tools/installer.iss"
+          if ($LASTEXITCODE -ne 0) { Write-Warning "ISCC exit $LASTEXITCODE"; exit 0 }
+          dir Output | Format-Table Name,Length
+          if (Test-Path "Output/DetectiveBlackville-Setup-$VERSION.exe") {
+            $hashInst=(Get-FileHash "Output/DetectiveBlackville-Setup-$VERSION.exe" -Algorithm SHA256).Hash
+            "$hashInst  DetectiveBlackville-Setup-$VERSION.exe" | Out-File -Append -Encoding utf8 dist/SHA256SUMS.txt
+            Write-Host "Installer hash: $hashInst"
+          }
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -144,6 +167,7 @@ jobs:
           files: |
             DetectiveBlackville-Windows.zip
             DetectiveBlackville-Full.zip
+            Output/DetectiveBlackville-Setup-*.exe
             dist/latest.json
             dist/SHA256SUMS.txt
           generate_release_notes: true

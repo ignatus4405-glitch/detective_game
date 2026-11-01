@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [0.1.8] — 2026-11-02
+
+### Added
+- Установщик теперь собирается на CI: `choco install innosetup` → `iscc` → `Output/DetectiveBlackville-Setup-v0.1.8.exe` в каждом Build/Release, публикуется как артефакт `DetectiveBlackville-Installer` и файл релиза
+
+### Changed
+- Bump 0.1.7 → 0.1.8 для включающего CI-инсталлятор
+
 ## [0.1.7] — 2026-11-02
 
 ### Added

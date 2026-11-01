@@ -6,6 +6,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.8] — 2026-11-02
+
+### Added
+- **Полноценный установщик Windows:** GitHub Actions теперь автоматически собирает `DetectiveBlackville-Setup-v0.1.8.exe` через Inno Setup 6 (`choco install innosetup`), включает в Release как отдельный ассет; `build.yml` публикует его как артефакт `DetectiveBlackville-Installer`
+- Установщик: установка в `{autopf}\BlackvilleDetective`, ярлыки в меню Пуск и на рабочий стол (опционально), реестр `HKCU\Software\BlackvilleDetective` (InstallPath/Version), корректный деинсталлятор, `AppMutex` против двойного запуска, modern wizard, иконка, поддержка x64
+
+### Changed
+- `tools/installer.iss` версия по умолчанию обновлена до `0.1.8`, улучшена документация сборки
+
 ## [0.1.7] — 2026-11-02
 
 ### Added
@@ -77,8 +86,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.7...HEAD
-[0.1.6]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.6...v0.1.7
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.7...v0.1.8
+[0.1.7]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.6...v0.1.7
+[0.1.6]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.2...v0.1.3
