@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-11-01
+
+### Fixed
+- **Фикс установщика:** `attempted relative import` → `launcher.py` + robust BASE_DIR (_MEIPASS)
+- **SmartScreen:** `tools/version_info.txt` + `tools/app.manifest` + иконка → меньше триггеров Defender; `docs/SMARTSCREEN.md`
+- **UX ошибки:** `launcher.py` теперь показывает MessageBox + пишет crash.log вместо 'Failed to execute script'
+
 ## [0.1.2] — 2026-11-01
 
 ### Fixed

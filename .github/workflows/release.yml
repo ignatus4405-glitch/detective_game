@@ -55,14 +55,29 @@ jobs:
       - name: Run tests
         run: pytest -q
 
-      - name: Build exe
+      - name: Generate version info
+        run: python tools/generate_version_info.py
+
+      - name: Build exe (fixed launcher)
         run: |
           pyinstaller --name DetectiveBlackville --onefile --windowed --clean --noconfirm `
+            --paths src `
+            --hidden-import detective_game `
+            --hidden-import detective_game.main `
+            --hidden-import detective_game.config `
+            --hidden-import detective_game.data `
+            --hidden-import detective_game.game_state `
+            --hidden-import detective_game.save_system `
+            --hidden-import detective_game.updater `
+            --hidden-import detective_game.ui.widgets `
+            --collect-all pygame `
+            --collect-all detective_game `
             --add-data "src/detective_game/assets;detective_game/assets" `
             --add-data "src/detective_game/cases;detective_game/cases" `
-            --hidden-import pygame `
-            --collect-all pygame `
-            src/detective_game/main.py
+            --icon "src/detective_game/assets/images/icon.ico" `
+            --version-file build_version_info.txt `
+            --manifest build_app.manifest `
+            launcher.py
           dir dist
 
       - name: Create latest.json
@@ -87,17 +102,25 @@ jobs:
           if [ -f CHANGELOG.md ]; then
             echo "# Детектив: Блэквил v$VERSION" > release_notes.md
             echo "" >> release_notes.md
-            # extract section
             awk "/## \[$VERSION\]/ {flag=1; next} /## \[/ {flag=0} flag" CHANGELOG.md | head -n 50 >> release_notes.md || echo "Релиз $VERSION" >> release_notes.md
           else
             echo "Release $VERSION — Детектив: Блэквил" > release_notes.md
           fi
           cat release_notes.md
 
+      - name: Generate README and hashes
+        run: |
+          python tools/make_readme.py
+          $hash = (Get-FileHash dist/DetectiveBlackville.exe -Algorithm SHA256).Hash
+          "SHA256: $hash  DetectiveBlackville.exe" | Out-File -Encoding utf8 dist/SHA256SUMS.txt
+          cat dist/latest.json
+          cat dist/SHA256SUMS.txt
+          cat dist/README.txt
+
       - name: Zip artifacts
         run: |
           Compress-Archive -Path dist/DetectiveBlackville.exe -DestinationPath DetectiveBlackville-Windows.zip -Force
-          Compress-Archive -Path dist/DetectiveBlackville.exe,dist/latest.json -DestinationPath DetectiveBlackville-Full.zip -Force
+          Compress-Archive -Path dist/DetectiveBlackville.exe,dist/latest.json,dist/SHA256SUMS.txt,dist/README.txt -DestinationPath DetectiveBlackville-Full.zip -Force
           dir *.zip
 
       - name: Create GitHub Release
@@ -110,6 +133,7 @@ jobs:
             DetectiveBlackville-Windows.zip
             DetectiveBlackville-Full.zip
             dist/latest.json
+            dist/SHA256SUMS.txt
           generate_release_notes: true
           draft: false
           prerelease: false

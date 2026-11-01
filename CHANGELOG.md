@@ -6,6 +6,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-11-01
+
+### Fixed
+- **Критический фикс установщика:** исправил `Failed to execute script 'main' — attempted relative import` → теперь собирается через `launcher.py` (absolute import) + `--paths src` + `--collect-all detective_game`
+- **SmartScreen:** добавлены `version_info.txt` (CompanyName/ProductVersion) + `app.manifest` (asInvoker) + иконка + SHA256 — снижает ложные срабатывания Защитника; инструкция в `docs/SMARTSCREEN.md` и `dist/README.txt`
+- **Улучшен handler ошибок:** вместо краша показывается дружелюбное окно (tkinter/MessageBox) + `crash.log` рядом с exe
+- Конфиг путей теперь учитывает `sys._MEIPASS` для PyInstaller onefile
+
 ## [0.1.2] — 2026-11-01
 
 ### Fixed
@@ -33,9 +41,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.0...v0.1.1
-[0.1.1]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.0...v0.1.1
+ https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ignatus4405-glitch/detective_game/releases/tag/v0.1.0
 [0.1.1]: https://github.com/ignatus4405-glitch/detective_game/releases/tag/v0.1.1
