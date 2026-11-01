@@ -94,7 +94,41 @@ if (-not (Test-Path DetectiveBlackville-Windows.zip)) {
 Write-Host "✓ Build complete: dist/DetectiveBlackville.exe" -ForegroundColor Green
 Write-Host "✓ Zip: DetectiveBlackville-Windows.zip" -ForegroundColor Green
 Write-Host "✓ Если SmartScreen ругается — см. docs/SMARTSCREEN.md" -ForegroundColor Yellow
-Get-ChildItem dist, DetectiveBlackville-Windows.zip | Format-Table Name, Length
+
+# --- Инсталлятор через Inno Setup (если установлен ISCC) ---
+$IsccPaths = @(
+  "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+  "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+  "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+  "iscc"
+)
+$Iscc = $null
+foreach ($path in $IsccPaths) {
+  if (Get-Command $path -ErrorAction SilentlyContinue) { $Iscc = $path; break }
+  if (Test-Path $path) { $Iscc = $path; break }
+}
+if ($Iscc) {
+  Write-Host "=== Building installer via Inno Setup ===" -ForegroundColor Cyan
+  $env:VERSION = $VERSION
+  # Проверка LICENSE
+  if (-not (Test-Path LICENSE)) { "MIT License" | Out-File -Encoding utf8 LICENSE }
+  & $Iscc "/DVERSION=$VERSION" "tools/installer.iss"
+  if ($LASTEXITCODE -eq 0) {
+    $SetupExe = Get-ChildItem Output -Filter *.exe | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($SetupExe) {
+      Write-Host "✓ Installer: $($SetupExe.FullName) ($([math]::Round($SetupExe.Length/1MB,1)) MB)" -ForegroundColor Green
+      $hashSetup = (Get-FileHash $SetupExe.FullName -Algorithm SHA256).Hash
+      "$hashSetup  $($SetupExe.Name)" | Out-File -Encoding utf8 -Append dist/SHA256SUMS.txt
+      Copy-Item $SetupExe.FullName -Destination "DetectiveBlackville-Setup-$VERSION.exe" -Force
+    }
+  } else {
+    Write-Warning "ISCC failed with exit code $LASTEXITCODE — zip still available"
+  }
+} else {
+  Write-Host "Inno Setup (ISCC.exe) не найден — пропускаем создание installer. Установите https://jrsoftware.org/isinfo.php для сборки Setup.exe" -ForegroundColor DarkYellow
+}
+
+Get-ChildItem dist, DetectiveBlackville-Windows.zip -ErrorAction SilentlyContinue | Format-Table Name, Length
 
 # Инструкция
 Write-Host ""

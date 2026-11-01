@@ -6,6 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.7] — 2026-11-02
+
+### Added
+- **Устанавливаемая игра:** Inno Setup инсталлятор `DetectiveBlackville-Setup-v0.1.7.exe` → Program Files/BlackvilleDetective, ярлыки в меню Пуск/рабочий стол, корректный uninstall, реестр версии, AppMutex
+- **Обновление из приложения:** кнопка «Проверить обновления» в настройках + баннер с прогресс-баром, скачивание `DetectiveBlackville-Windows.zip` прямо из игры (stream с прогрессом), открытие папки загрузок по клику, без браузера
+- **Настройки экрана:** выбор разрешения (HD/QHD/FullHD/ультраширокий + авто-детект десктопа), выбор монитора при multi-monitor (`pygame.display.get_num_displays`), режимы окна — оконный / полный экран / без рамки (borderless fullscreen), применение без перезапуска
+- **Кастомные кнопки:** градиентные noir-кнопки с hover-анимацией, свечением, тенью, состояниями primary/secondary/danger/success, иконками
+- **Улучшение отображения картинок:** `draw_avatar` теперь aspect-fill (cover) вместо stretch — сохранение пропорций, фокус на лицо, скруглённые углы, золотая рамка + внешнее свечение для выбранного
+- **Новые виджеты настроек:** Dropdown (выпадающий список), Toggle (переключатель), Slider (ползунок громкости) — всё в фирменном нуар-стиле
+
+### Fixed
+- Исправлено обрезание подсказки «Острый глаз...» в кастомизации — теперь прижата к низу панели с отступом 28px, не выходит за окно
+- Миграция старых настроек `fullscreen` bool → `window_mode` enum для совместимости сохранений
+- Папка сохранений и версия теперь внутри панели настроек, а не перекрывают контролы
+
 ## [0.1.6] — 2026-11-02
 
 ### Added
@@ -62,8 +77,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.6...HEAD
-[0.1.6]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.5...v0.1.6
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.7...HEAD
+[0.1.6]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.6...v0.1.7
 [0.1.5]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.2...v0.1.3
