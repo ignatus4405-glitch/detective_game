@@ -39,15 +39,47 @@ jobs:
       - name: Run tests
         run: pytest -q
 
-      - name: Build exe with PyInstaller
+      - name: Generate version info
+        run: python tools/generate_version_info.py
+
+      - name: Build exe with PyInstaller (fixed launcher)
         run: |
           pyinstaller --name DetectiveBlackville --onefile --windowed --clean --noconfirm `
+            --paths src `
+            --hidden-import detective_game `
+            --hidden-import detective_game.main `
+            --hidden-import detective_game.config `
+            --hidden-import detective_game.data `
+            --hidden-import detective_game.game_state `
+            --hidden-import detective_game.save_system `
+            --hidden-import detective_game.updater `
+            --hidden-import detective_game.ui.widgets `
+            --collect-all pygame `
+            --collect-all detective_game `
             --add-data "src/detective_game/assets;detective_game/assets" `
             --add-data "src/detective_game/cases;detective_game/cases" `
-            --hidden-import pygame `
-            --collect-all pygame `
-            src/detective_game/main.py
+            --icon "src/detective_game/assets/images/icon.ico" `
+            --version-file build_version_info.txt `
+            --manifest build_app.manifest `
+            launcher.py
           dir dist
+          if (-not (Test-Path dist/DetectiveBlackville.exe)) { throw "Build failed" }
+
+      - name: Generate README and hashes
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Continue"
+          python tools/make_readme.py
+          if (Test-Path dist/DetectiveBlackville.exe) {
+            $hash = (Get-FileHash dist/DetectiveBlackville.exe -Algorithm SHA256).Hash
+            "SHA256: $hash  DetectiveBlackville.exe" | Out-File -Encoding utf8 dist/SHA256SUMS.txt
+            Write-Host "SHA256: $hash"
+          } else {
+            Write-Warning "Exe not found for hashing"
+            "SHA256: unavailable" | Out-File -Encoding utf8 dist/SHA256SUMS.txt
+          }
+          if (Test-Path dist/SHA256SUMS.txt) { Get-Content dist/SHA256SUMS.txt }
+          if (Test-Path dist/README.txt) { Write-Host "README.txt exists" }
 
       - name: Create latest.json
         shell: bash
@@ -66,8 +98,11 @@ jobs:
 
       - name: Zip artifact
         run: |
-          Compress-Archive -Path dist/DetectiveBlackville.exe,dist/latest.json -DestinationPath DetectiveBlackville-Windows.zip -Force
-          dir
+          $ErrorActionPreference = "Continue"
+          $files = @("dist/DetectiveBlackville.exe", "dist/latest.json", "dist/SHA256SUMS.txt", "dist/README.txt") | Where-Object { Test-Path $_ }
+          if ($files.Count -eq 0) { throw "No files to zip" }
+          Compress-Archive -Path $files -DestinationPath DetectiveBlackville-Windows.zip -Force
+          dir DetectiveBlackville-Windows.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

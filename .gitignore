@@ -12,12 +12,14 @@ venv/
 .env
 *.log
 
-# PyInstaller
-*.manifest
+# PyInstaller (but keep tools assets)
 *.spec
-build/
-dist/
 *.exe
+!tools/app.manifest
+!tools/version_info.txt
+build_version_info.txt
+build_app.manifest
+crash.log
 
 # Game
 saves/

@@ -64,9 +64,33 @@ pip install -r requirements.txt
 python -m detective_game
 # или
 detective-game
+# или напрямую через launcher (исправляет ошибку установщика):
+python launcher.py
 ```
 
 **Требования:** Python 3.10+, pygame 2.5+, Windows 10/11 (сборка), Linux/macOS — для разработки.
+
+### 🔧 Исправление ошибки установщика (v0.1.3)
+
+**Было:** `Failed to execute script 'main' — attempted relative import with no known parent package` (см. скриншот) — PyInstaller собирал `src/detective_game/main.py` напрямую, у него `__package__ == None` → `from .config import *` падал.
+
+**Исправлено:** точка входа теперь `launcher.py` в корне (absolute import `from detective_game.main import main`) + `--paths src --collect-all detective_game` в `tools/build.ps1` и `.github/workflows/*.yml`. Проверьте `dist/README.txt` после сборки.
+
+### 🛡️ SmartScreen / Защитник Windows
+
+Неподписанный `.exe` без репутации вызывает *«Система Windows защитила ваш компьютер»* — это не вирус, а политика Microsoft.
+
+**Что делать:**
+1. Правый клик по `DetectiveBlackville.exe` → Свойства → **Разблокировать** (внизу) → ОК
+2. Запуск → **Подробнее** → **Выполнить в любом случае**
+3. Или используйте установщик `DetectiveBlackville-Setup.exe` (Inno Setup) — у него больше доверия
+
+**Что мы сделали чтобы снизить срабатывания:**
+- Метаданные VERSION (`--version-file` → CompanyName/ProdVersion)
+- Манифест `asInvoker` (`--manifest` → не просит админских прав)
+- Иконка + SHA256 хеш в релизе для проверки `Get-FileHash`
+
+Подробно: [`docs/SMARTSCREEN.md`](docs/SMARTSCREEN.md) | Хеш: `certUtil -hashfile DetectiveBlackville.exe SHA256`
 
 ---
 

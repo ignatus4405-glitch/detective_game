@@ -4,7 +4,7 @@
 #define MyAppName "Детектив: Блэквил"
 #define MyAppVersion GetEnv("VERSION")
 #if MyAppVersion == ""
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.1.3"
 #endif
 #define MyAppPublisher "Blackville Studio"
 #define MyAppURL "https://github.com/ignatus4405-glitch/detective_game"

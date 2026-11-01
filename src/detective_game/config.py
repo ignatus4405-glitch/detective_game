@@ -1,8 +1,22 @@
 """Глобальные настройки и константы."""
+import sys
 from pathlib import Path
 
-# Пути
-BASE_DIR = Path(__file__).parent
+
+def _get_base_dir() -> Path:
+    """Возвращает директорию пакета, учитывая PyInstaller _MEIPASS."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        # В сборке: _MEIPASS/detective_game
+        meipass = Path(sys._MEIPASS)
+        # assets добавлены как detective_game/assets → _MEIPASS/detective_game/assets
+        candidate = meipass / "detective_game"
+        if (candidate / "assets").exists():
+            return candidate
+        # Fallback: если собирали с --add-data на корень
+        return meipass
+    return Path(__file__).parent
+
+BASE_DIR = _get_base_dir()
 ASSETS_DIR = BASE_DIR / "assets"
 IMAGES_DIR = ASSETS_DIR / "images"
 SOUNDS_DIR = ASSETS_DIR / "sounds"

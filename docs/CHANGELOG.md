@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+## [0.1.5] — 2026-11-01
+
+### Fixed
+- CI/Release: Generate README теперь не блокирует сборку (continue-on-error)
+
+## [0.1.4] — 2026-11-01
+
+### Fixed
+- Исправлен Generate README and hashes в build/release.yml (робастный PowerShell)
+
+## [0.1.3] — 2026-11-01
+
+### Fixed
+- **Фикс установщика:** `attempted relative import` → `launcher.py` + robust BASE_DIR (_MEIPASS)
+- **SmartScreen:** `tools/version_info.txt` + `tools/app.manifest` + иконка → меньше триггеров Defender; `docs/SMARTSCREEN.md`
+- **UX ошибки:** `launcher.py` теперь показывает MessageBox + пишет crash.log вместо 'Failed to execute script'
+
 ## [0.1.2] — 2026-11-01
 
 ### Fixed
