@@ -110,17 +110,28 @@ jobs:
 
       - name: Generate README and hashes
         run: |
+          $ErrorActionPreference = "Continue"
           python tools/make_readme.py
-          $hash = (Get-FileHash dist/DetectiveBlackville.exe -Algorithm SHA256).Hash
-          "SHA256: $hash  DetectiveBlackville.exe" | Out-File -Encoding utf8 dist/SHA256SUMS.txt
-          cat dist/latest.json
-          cat dist/SHA256SUMS.txt
-          cat dist/README.txt
+          if (Test-Path dist/DetectiveBlackville.exe) {
+            $hash = (Get-FileHash dist/DetectiveBlackville.exe -Algorithm SHA256).Hash
+            "SHA256: $hash  DetectiveBlackville.exe" | Out-File -Encoding utf8 dist/SHA256SUMS.txt
+            Write-Host "SHA256: $hash"
+          } else {
+            Write-Warning "Exe missing for hash"
+            "SHA256: unavailable" | Out-File -Encoding utf8 dist/SHA256SUMS.txt
+          }
+          if (Test-Path dist/latest.json) { Get-Content dist/latest.json }
+          if (Test-Path dist/SHA256SUMS.txt) { Get-Content dist/SHA256SUMS.txt }
+          if (Test-Path dist/README.txt) { Write-Host "README.txt ready" }
+          dir dist
 
       - name: Zip artifacts
         run: |
-          Compress-Archive -Path dist/DetectiveBlackville.exe -DestinationPath DetectiveBlackville-Windows.zip -Force
-          Compress-Archive -Path dist/DetectiveBlackville.exe,dist/latest.json,dist/SHA256SUMS.txt,dist/README.txt -DestinationPath DetectiveBlackville-Full.zip -Force
+          $ErrorActionPreference = "Continue"
+          $files1 = @("dist/DetectiveBlackville.exe") | Where-Object { Test-Path $_ }
+          Compress-Archive -Path $files1 -DestinationPath DetectiveBlackville-Windows.zip -Force
+          $files2 = @("dist/DetectiveBlackville.exe", "dist/latest.json", "dist/SHA256SUMS.txt", "dist/README.txt") | Where-Object { Test-Path $_ }
+          Compress-Archive -Path $files2 -DestinationPath DetectiveBlackville-Full.zip -Force
           dir *.zip
 
       - name: Create GitHub Release

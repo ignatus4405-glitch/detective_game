@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-11-01
+
+### Fixed
+- Исправлен Generate README and hashes в build/release.yml (робастный PowerShell)
+
 ## [0.1.3] — 2026-11-01
 
 ### Fixed

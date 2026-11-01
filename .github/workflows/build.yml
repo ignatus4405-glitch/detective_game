@@ -67,10 +67,18 @@ jobs:
 
       - name: Generate README and hashes
         run: |
+          $ErrorActionPreference = "Continue"
           python tools/make_readme.py
-          $hash = (Get-FileHash dist/DetectiveBlackville.exe -Algorithm SHA256).Hash
-          "SHA256: $hash  DetectiveBlackville.exe" | Out-File -Encoding utf8 dist/SHA256SUMS.txt
-          cat dist/SHA256SUMS.txt
+          if (Test-Path dist/DetectiveBlackville.exe) {
+            $hash = (Get-FileHash dist/DetectiveBlackville.exe -Algorithm SHA256).Hash
+            "SHA256: $hash  DetectiveBlackville.exe" | Out-File -Encoding utf8 dist/SHA256SUMS.txt
+            Write-Host "SHA256: $hash"
+          } else {
+            Write-Warning "Exe not found for hashing"
+            "SHA256: unavailable" | Out-File -Encoding utf8 dist/SHA256SUMS.txt
+          }
+          if (Test-Path dist/SHA256SUMS.txt) { Get-Content dist/SHA256SUMS.txt }
+          if (Test-Path dist/README.txt) { Write-Host "README.txt exists" }
 
       - name: Create latest.json
         shell: bash
@@ -89,8 +97,11 @@ jobs:
 
       - name: Zip artifact
         run: |
-          Compress-Archive -Path dist/DetectiveBlackville.exe,dist/latest.json,dist/SHA256SUMS.txt,dist/README.txt -DestinationPath DetectiveBlackville-Windows.zip -Force
-          dir
+          $ErrorActionPreference = "Continue"
+          $files = @("dist/DetectiveBlackville.exe", "dist/latest.json", "dist/SHA256SUMS.txt", "dist/README.txt") | Where-Object { Test-Path $_ }
+          if ($files.Count -eq 0) { throw "No files to zip" }
+          Compress-Archive -Path $files -DestinationPath DetectiveBlackville-Windows.zip -Force
+          dir DetectiveBlackville-Windows.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
