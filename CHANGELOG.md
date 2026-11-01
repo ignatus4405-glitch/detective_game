@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-11-01
+
+### Fixed
+- Исправлен Release workflow: разделил создание latest.json/notes/zip, починил shell (bash vs pwsh)
+
 ## [0.1.1] — 2026-11-01
 
 ### Fixed
@@ -28,7 +33,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.0...v0.1.1
 [0.1.1]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ignatus4405-glitch/detective_game/releases/tag/v0.1.0
 [0.1.1]: https://github.com/ignatus4405-glitch/detective_game/releases/tag/v0.1.1

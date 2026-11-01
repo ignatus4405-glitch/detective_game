@@ -65,7 +65,7 @@ jobs:
             src/detective_game/main.py
           dir dist
 
-      - name: Create release assets
+      - name: Create latest.json
         shell: bash
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
@@ -75,19 +75,30 @@ jobs:
             "tag": "v$VERSION",
             "url": "https://github.com/ignatus4405-glitch/detective_game/releases/tag/v$VERSION",
             "published_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "notes": "Release $VERSION"
+            "notes": "Release $VERSION — Детектив: Блэквил"
           }
           EOF
           cat dist/latest.json
+
+      - name: Create release notes
+        shell: bash
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
           if [ -f CHANGELOG.md ]; then
-            echo "## CHANGELOG for v$VERSION" > release_notes.md
-            sed -n "/## \[$VERSION\]/,/## \[/p" CHANGELOG.md | head -n 60 >> release_notes.md
+            echo "# Детектив: Блэквил v$VERSION" > release_notes.md
+            echo "" >> release_notes.md
+            # extract section
+            awk "/## \[$VERSION\]/ {flag=1; next} /## \[/ {flag=0} flag" CHANGELOG.md | head -n 50 >> release_notes.md || echo "Релиз $VERSION" >> release_notes.md
           else
             echo "Release $VERSION — Детектив: Блэквил" > release_notes.md
           fi
           cat release_notes.md
+
+      - name: Zip artifacts
+        run: |
           Compress-Archive -Path dist/DetectiveBlackville.exe -DestinationPath DetectiveBlackville-Windows.zip -Force
           Compress-Archive -Path dist/DetectiveBlackville.exe,dist/latest.json -DestinationPath DetectiveBlackville-Full.zip -Force
+          dir *.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-11-01
+
+### Fixed
+- Release workflow починен (Create release assets делился, sed→awk, Compress-Archive в pwsh)
+
 ## [0.1.1] — 2026-11-01
 
 ### Fixed
