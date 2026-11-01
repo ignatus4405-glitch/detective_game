@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [0.1.5] — 2026-11-01
+
+### Fixed
+- CI/Release: Generate README теперь не блокирует сборку (continue-on-error)
+
 ## [0.1.4] — 2026-11-01
 
 ### Fixed

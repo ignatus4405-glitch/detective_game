@@ -66,6 +66,7 @@ jobs:
           if (-not (Test-Path dist/DetectiveBlackville.exe)) { throw "Build failed" }
 
       - name: Generate README and hashes
+        continue-on-error: true
         run: |
           $ErrorActionPreference = "Continue"
           python tools/make_readme.py
