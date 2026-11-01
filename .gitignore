@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+.env
+*.log
+
+# PyInstaller
+*.manifest
+*.spec
+build/
+dist/
+*.exe
+
+# Game
+saves/
+*.save
+.DS_Store
+Thumbs.db
+settings.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+logs.zip

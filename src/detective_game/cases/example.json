@@ -1,0 +1,32 @@
+{
+  "_comment": "Шаблон для нового дела — скопируй и заполни. Он уже валиден и появится в игре как туториал.",
+  "id": "tutorial",
+  "title": "Учебное дело: Пропавший кот",
+  "subtitle": "Туториал для новых детективов",
+  "difficulty": "★☆☆",
+  "duration": "10–15 мин",
+  "price": "Бесплатно",
+  "description": "Кот мэра пропал. Кажется, дело простое — пока не находишь отпечатки чужих ботинок у миски.",
+  "intro": "Блэквил, утро. Мэр звонит в панике — его кот Барсик исчез. Вы берётесь за дело, хотя пахнет оно странно. Слишком много суеты из-за кота.",
+  "recommended_time": 15,
+  "locations": [
+    {"id": "office", "name": "Ваш офис", "type": "hub", "x": 640, "y": 360, "district": "Центр", "desc": "Тут всё начинается.", "initial": true},
+    {"id": "mayor_house", "name": "Дом мэра", "type": "mansion", "x": 400, "y": 200, "district": "Холмы", "desc": "Роскошный дом, но кот исчез.", "initial": true},
+    {"id": "park", "name": "Парк", "type": "public", "x": 800, "y": 400, "district": "Центр", "desc": "Дети видели кота здесь.", "initial": false}
+  ],
+  "clues": [
+    {"id": "clue_paw", "title": "Отпечаток лапы", "desc": "Грязный след ведёт к парку.", "location": "mayor_house", "importance": "high", "leads_to": ["park"]},
+    {"id": "clue_collar", "title": "Ошейник", "desc": "Найден в кустах парка. С запиской: Верну за выкуп.", "location": "park", "importance": "high", "leads_to": []}
+  ],
+  "characters": [
+    {"id": "mayor", "name": "Мэр Джонс", "role": "Клиент", "location": "mayor_house", "bio": "Любит кота больше избирателей.", "portrait_color": [80, 100, 120], "dialogue": [{"q": "Когда пропал кот?", "a": "Вчера вечером! Кто-то оставил окно открытым."}]}
+  ],
+  "suspects": [
+    {"id": "neighbor", "name": "Сосед Смит", "motive": "Мэр не дал разрешение на пристройку", "evidence": ["clue_collar"], "is_culprit": true},
+    {"id": "mayor_sus", "name": "Сам мэр", "motive": "Страховка на кота", "evidence": [], "is_culprit": false}
+  ],
+  "endings": {
+    "neighbor": {"success": true, "title": "Кот найден", "text": "Смит хотел насолить мэру и украл кота. Барсик вернулся домой, а вы получили ящик виски от мэра.", "rank": "S"},
+    "mayor_sus": {"success": false, "title": "Мимо", "text": "Мэр не виноват. Пока вы его допрашивали, Смит увез кота в другой город.", "rank": "F"}
+  }
+}
