@@ -105,7 +105,7 @@ jobs:
           dir DetectiveBlackville-Windows.zip
 
       - name: Install Inno Setup
-        continue-on-error: true (for installer)
+        continue-on-error: true
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
 
       - name: Build Windows installer (Inno Setup)
