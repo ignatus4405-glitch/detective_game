@@ -1583,6 +1583,8 @@ class Game:
         font_small = get_font(11)
         # Адаптивно к текущему размеру окна
         W, H = self.screen.get_size()
+        mouse = pygame.mouse.get_pos()
+        pressed = pygame.mouse.get_pressed()[0]
         header = pygame.Rect(30, 15, W - 60, 54)
         draw_panel(self.screen, header)
         # Кнопка НАЗАД в шапке - всегда видна
@@ -1623,9 +1625,6 @@ class Game:
             (right.right - 15, right.y + 36),
             1,
         )
-
-        mouse = pygame.mouse.get_pos()
-        pressed = pygame.mouse.get_pressed()[0]
 
         # --- ЛЕВАЯ: Разрешение ---
         y = left.y + 50
@@ -1787,7 +1786,7 @@ class Game:
             self.screen.blit(new_ver, (upd_rect.x + 12, upd_rect.y + 10))
             name_txt = get_font(10).render(info.get("name", "")[:46], True, (220, 255, 220))
             self.screen.blit(name_txt, (upd_rect.x + 12, upd_rect.y + 26))
-            # Кнопки скачать / позже
+            # Кнопки: прогресс / скачать / установить
             if checker.downloading:
                 prog = checker.download_progress / 100 if checker.download_total else 0
                 # прогресс-бар
@@ -1795,6 +1794,35 @@ class Game:
                 draw_progress_bar(self.screen, bar_rect, prog)
                 pct = get_font(9).render(f"{checker.download_progress}%", True, COLOR_TEXT)
                 self.screen.blit(pct, (bar_rect.right + 6, bar_rect.y - 1))
+            elif getattr(checker, "downloaded_path", None) and checker.downloaded_path.exists():
+                # Уже скачано — показываем кнопку УСТАНОВИТЬ
+                ok_txt = get_font(9).render(f"✓ Скачано: {checker.downloaded_path.name}", True, (180, 255, 180))
+                self.screen.blit(ok_txt, (upd_rect.x + 12, upd_rect.y + 44))
+                btn_install = Button(
+                    (upd_rect.x + 12, upd_rect.y + 58, 140, 26), "▶ УСТАНОВИТЬ", style="success"
+                )
+                btn_install.update(mouse, pressed)
+                btn_install.draw(self.screen, get_font(8, bold=True))
+                if btn_install.clicked:
+                    self.add_notification(f"Запуск установщика: {checker.downloaded_path.name}")
+                    try:
+                        from .updater import run_installer
+                        if run_installer(checker.downloaded_path):
+                            # Закрываем игру чтобы файлы не были заняты
+                            import sys as _sys
+                            pygame.quit()
+                            _sys.exit(0)
+                    except Exception as e:
+                        self.add_notification(f"Ошибка запуска: {e}")
+                btn_folder = Button((upd_rect.x + 160, upd_rect.y + 58, 80, 26), "Папка")
+                btn_folder.update(mouse, pressed)
+                btn_folder.draw(self.screen, get_font(8, bold=True))
+                if btn_folder.clicked:
+                    try:
+                        from .updater import open_download_folder
+                        open_download_folder(checker.downloaded_path)
+                    except Exception:
+                        pass
             else:
                 btn_dl = Button(
                     (upd_rect.x + 12, upd_rect.y + 46, 120, 28), "⬇  СКАЧАТЬ", style="success"
@@ -1809,6 +1837,10 @@ class Game:
                 btn_later.draw(self.screen, get_font(9, bold=True))
                 if btn_later.clicked:
                     self.update_dismissed = True
+            # Ошибка загрузки
+            if getattr(checker, "download_error", None):
+                err_txt = get_font(8).render(checker.download_error[:50], True, COLOR_RED)
+                self.screen.blit(err_txt, (upd_rect.x + 12, upd_rect.y + 74 - 2))
         elif checker.done and not checker.result and checker.done:
             # Нет обновлений
             if hasattr(self, "_checked_once"):
@@ -1880,6 +1912,8 @@ class Game:
                         self.screen.blit(chk, (opt_rect.right - 20, opt_rect.y + (opt_rect.h - chk.get_height()) // 2))
 
     def draw_update_banner(self):
+        from .ui.widgets import Button, draw_progress_bar, get_font
+
         if self.update_dismissed or self.screen_name == "settings":
             # В настройках уже есть детальная панель — баннер не мешаем
             return
@@ -1888,40 +1922,42 @@ class Game:
         if checker.done and checker.result:
             banner = checker.result
         if not banner:
-            # Покажем успех скачивания
+            # Покажем успех скачивания даже если result уже сброшен (напр. после перезапуска проверки)
             if getattr(checker, "downloaded_path", None) and not checker.downloading:
-                rect = pygame.Rect(WINDOW_WIDTH // 2 - 340, 10, 680, 52)
+                rect = pygame.Rect(WINDOW_WIDTH // 2 - 360, 10, 720, 56)
                 pygame.draw.rect(self.screen, (16, 45, 70), rect, border_radius=8)
                 pygame.draw.rect(self.screen, (80, 140, 220), rect, width=2, border_radius=8)
+                ver_txt = checker.result['latest'] if checker.result and checker.result.get('latest') else ''
                 txt = get_font(12, bold=True).render(
-                    f"Обновление v{checker.result['latest'] if checker.result else ''} скачано: {checker.downloaded_path.name}",
-                    True,
-                    (255, 255, 255),
+                    f"✓ Обновление v{ver_txt} скачано: {checker.downloaded_path.name}", True, (255, 255, 255)
                 )
                 self.screen.blit(txt, (rect.x + 15, rect.y + 8))
-                sub = get_font(11).render(
-                    "Нажмите, чтобы открыть папку с файлом", True, (200, 230, 255)
-                )
-                self.screen.blit(sub, (rect.x + 15, rect.y + 26))
+                sub = get_font(11).render("Готово к установке — нажмите «Установить и перезапустить»", True, (200, 230, 255))
+                self.screen.blit(sub, (rect.x + 15, rect.y + 28))
                 mouse = pygame.mouse.get_pos()
                 pressed = pygame.mouse.get_pressed()[0]
+                btn_inst = Button((rect.right - 220, rect.y + 12, 150, 32), "▶ УСТАНОВИТЬ", style="success")
+                btn_inst.update(mouse, pressed)
+                btn_inst.draw(self.screen, get_font(9, bold=True))
+                if btn_inst.clicked:
+                    try:
+                        from .updater import run_installer
+                        if run_installer(checker.downloaded_path):
+                            import sys as _sys
+                            pygame.quit()
+                            _sys.exit(0)
+                    except Exception as e:
+                        self.add_notification(f"Ошибка установки: {e}")
                 close_rect = pygame.Rect(rect.right - 30, rect.y + 10, 20, 20)
                 pygame.draw.rect(self.screen, (40, 70, 110), close_rect, border_radius=4)
                 x_txt = get_font(12, bold=True).render("×", True, (255, 255, 255))
                 self.screen.blit(x_txt, x_txt.get_rect(center=close_rect.center))
                 if close_rect.collidepoint(mouse) and pressed:
                     self.update_dismissed = True
-                if rect.collidepoint(mouse) and pressed:
-                    try:
-                        from .updater import open_download_folder
-
-                        open_download_folder(checker.downloaded_path)
-                    except Exception:
-                        pass
             return
         # Активный баннер обновления
         rect = pygame.Rect(WINDOW_WIDTH // 2 - 360, 10, 720, 64)
-        from .ui.widgets import Button, draw_progress_bar
+        from .ui.widgets import Button
 
         pygame.draw.rect(self.screen, (20, 60, 40), rect, border_radius=10)
         pygame.draw.rect(self.screen, COLOR_GREEN, rect, width=2, border_radius=10)
@@ -1951,6 +1987,30 @@ class Game:
             draw_progress_bar(self.screen, bar_rect, prog, radius=5)
             pct = get_font(9, bold=True).render(f"{checker.download_progress}%", True, COLOR_TEXT)
             self.screen.blit(pct, (bar_rect.right + 8, bar_rect.y - 2))
+        elif getattr(checker, "downloaded_path", None) and checker.downloaded_path.exists():
+            # СКАЧАНО — показываем УСТАНОВИТЬ прямо на главном экране
+            btn_install = Button((rect.right - 220, rect.y + 12, 150, 26), "▶ УСТАНОВИТЬ", style="success")
+            btn_install.update(mouse, pressed)
+            btn_install.draw(self.screen, get_font(9, bold=True))
+            if btn_install.clicked:
+                try:
+                    from .updater import run_installer
+                    self.add_notification(f"Запуск установщика: {checker.downloaded_path.name}")
+                    if run_installer(checker.downloaded_path):
+                        import sys as _sys
+                        pygame.quit()
+                        _sys.exit(0)
+                except Exception as e:
+                    self.add_notification(f"Ошибка установки: {e}")
+            btn_open = Button((rect.right - 60, rect.y + 12, 40, 26), "Папка")
+            btn_open.update(mouse, pressed)
+            btn_open.draw(self.screen, get_font(8, bold=True))
+            if btn_open.clicked:
+                try:
+                    from .updater import open_download_folder
+                    open_download_folder(checker.downloaded_path)
+                except Exception:
+                    pass
         else:
             # Кнопки: скачать / скачать + открыть / закрыть
             btn_dl = Button((rect.right - 220, rect.y + 12, 110, 26), "⬇ Скачать", style="success")
