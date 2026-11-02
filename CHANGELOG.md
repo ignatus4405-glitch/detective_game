@@ -6,6 +6,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.13] — 2026-11-02
+
+### Added
+- Кнопка «← НАЗАД» в шапке настроек и внизу по центру — всегда видна, возвращает в меню; исправлено положение предыдущей кнопки (была за пределами окна `right.bottom+12`)
+
+### Fixed
+- **Шрифт в настройках:** убран дубль лейблов (`Dropdown` label `Разрешение`/`Экран` → `""`), ручные лейблы `РАЗРЕШЕНИЕ ЭКРАНА`/`ЭКРАН (МОНИТОР)`/`РЕЖИМ ОКНА` теперь `get_font(11,bold)` с `COLOR_TEXT` вместо `10/COLOR_TEXT_DIM`, читаемость улучшена
+- **Ярлык при установке:** `desktopicon` теперь `Flags: checkedonce` (включён по умолчанию), добавлены `WorkingDir` и дублирующий `userdesktop` ярлык — ярлык гарантированно создаётся и в per-user режиме
+- **Разработчик:** `Blackville Studio` → `Sams_studio128` в `installer.iss` (`MyAppPublisher`/`VersionInfo*`), `pyproject.toml`, `version_info.txt`, `__init__.py`, `main.py`, `app.manifest`, `SMARTSCREEN.md`
+
 ## [0.1.12] — 2026-11-02
 
 ### Fixed
@@ -106,7 +116,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.12...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.13...HEAD
+[0.1.13]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.9...v0.1.10

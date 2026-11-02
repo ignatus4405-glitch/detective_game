@@ -186,10 +186,10 @@ class Game:
             pygame.Rect(0, 0, 280, 36),
             res_opts,
             selected=f"{cur_res[0]}x{cur_res[1]}",
-            label="Разрешение",
+            label="",
         )
         self.monitor_dropdown = Dropdown(
-            pygame.Rect(0, 0, 280, 36), mon_opts, selected=str(cur_mon), label="Экран"
+            pygame.Rect(0, 0, 280, 36), mon_opts, selected=str(cur_mon), label=""
         )
         # Для одного монитора — дизейблим выбор? оставляем но показываем 1
         self.window_mode = self.settings.get("window_mode", "windowed")
@@ -527,7 +527,7 @@ class Game:
         from . import __version__
 
         ver = font_small.render(
-            f"v{__version__}  •  © Blackville Studio  •  {GITHUB_RELEASES_URL}",
+            f"v{__version__}  •  © Sams_studio128  •  {GITHUB_RELEASES_URL}",
             True,
             COLOR_TEXT_DARK,
         )
@@ -1585,6 +1585,12 @@ class Game:
         W, H = self.screen.get_size()
         header = pygame.Rect(30, 15, W - 60, 54)
         draw_panel(self.screen, header)
+        # Кнопка НАЗАД в шапке - всегда видна
+        btn_back_top = Button((header.x + 10, header.y + 12, 110, 30), "← НАЗАД", style="secondary")
+        btn_back_top.update(mouse, pressed)
+        btn_back_top.draw(self.screen, get_font(11, bold=True))
+        if btn_back_top.clicked:
+            self.screen_name = "menu"
         t = font_title.render("НАСТРОЙКИ  —  Экран и звук", True, COLOR_ACCENT)
         self.screen.blit(t, t.get_rect(center=(W // 2, header.centery)))
         # Подзаголовок версии
@@ -1624,7 +1630,7 @@ class Game:
         # --- ЛЕВАЯ: Разрешение ---
         y = left.y + 50
         # Подписи
-        lbl_res = get_font(10, bold=True).render("РАЗРЕШЕНИЕ ЭКРАНА", True, COLOR_TEXT_DIM)
+        lbl_res = get_font(11, bold=True).render("РАЗРЕШЕНИЕ ЭКРАНА", True, COLOR_TEXT)
         self.screen.blit(lbl_res, (left.x + 20, y))
         y += 18
         # Обновляем rect дропдаунов под текущую панель
@@ -1633,12 +1639,12 @@ class Game:
         # Показываем текущий применённый рядом
         cur_res = tuple(self.settings.get("resolution", [W, H]))
         cur_label = f"{cur_res[0]}×{cur_res[1]}"
-        hint = font_small.render(f"Применено: {cur_label}", True, COLOR_TEXT_DARK)
+        hint = get_font(10).render(f"Применено: {cur_label}", True, COLOR_TEXT_DIM)
         self.screen.blit(hint, (left.x + 20, y + 40))
         y += 64
 
         # Монитор
-        lbl_mon = get_font(10, bold=True).render("ЭКРАН (МОНИТОР)", True, COLOR_TEXT_DIM)
+        lbl_mon = get_font(11, bold=True).render("ЭКРАН (МОНИТОР)", True, COLOR_TEXT)
         self.screen.blit(lbl_mon, (left.x + 20, y))
         y += 18
         try:
@@ -1656,7 +1662,7 @@ class Game:
         y += 64
 
         # Режим окна — 3 кнопки-сегмента
-        lbl_mode = get_font(10, bold=True).render("РЕЖИМ ОКНА", True, COLOR_TEXT_DIM)
+        lbl_mode = get_font(11, bold=True).render("РЕЖИМ ОКНА", True, COLOR_TEXT)
         self.screen.blit(lbl_mode, (left.x + 20, y))
         y += 18
         mode_labels = {
@@ -1826,8 +1832,8 @@ class Game:
             save_game(self.state)
             self.add_notification("Прогресс сброшен — начинаем заново")
 
-        # Назад
-        btn_back = Button((right.centerx - 60, right.bottom + 12, 120, 34), "←  В МЕНЮ")
+        # Кнопка НАЗАД внизу - центр экрана, всегда видна
+        btn_back = Button((W // 2 - 80, H - 44, 160, 36), "←  В МЕНЮ", style="secondary")
         btn_back.update(mouse, pressed)
         btn_back.draw(self.screen, get_font(11, bold=True))
         if btn_back.clicked:

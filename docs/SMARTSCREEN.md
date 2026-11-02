@@ -9,7 +9,7 @@
    - Стало: `launcher.py` (корень, absolute import) → `from detective_game.main import main` — корректный запуск
 
 2. **Метаданные версии** (`--version-file`)
-   - `tools/version_info.txt` → CompanyName=Blackville Studio, ProductName, FileVersion/ProVersion из `VERSION`, Copyright MIT
+   - `tools/version_info.txt` → CompanyName=Sams_studio128, ProductName, FileVersion/ProVersion из `VERSION`, Copyright MIT
    - SmartScreen реже триггерит на файлы с заполненными метаданными, чем на «анонимные» exe
 
 3. **Манифест с `asInvoker`** (`--manifest`)
@@ -51,7 +51,7 @@ Unblock-File -Path .\DetectiveBlackville.exe
 
 | Метод | Эффект | Стоимость |
 |-------|--------|-----------|
-| **EV Code Signing сертификат** (SSL.com, DigiCert) — подпись `signtool sign /fd SHA256 /tr http://timestamp.digicert.com` | ✅ SmartScreen сразу доверяет, «Издатель: Blackville Studio» вместо «Неизвестен» | ~$200–400/год |
+| **EV Code Signing сертификат** (SSL.com, DigiCert) — подпись `signtool sign /fd SHA256 /tr http://timestamp.digicert.com` | ✅ SmartScreen сразу доверяет, «Издатель: Sams_studio128» вместо «Неизвестен» | ~$200–400/год |
 | **Обычный OV сертификат** + накопление репутации | ⚠️ Сначала всё равно SmartScreen, но после 50+ скачиваний и положительной репутации предупреждение уходит | ~$70–100/год |
 | **Microsoft Store** (MSIX) | ✅ Проходит модерацию, SmartScreen не триггерит | Бесплатно (аккаунт $19) |
 | **Submit to Microsoft Defender** — https://www.microsoft.com/wdsi/filesubmission | ⚠️ Ускоряет анализ, но не гарантия | Бесплатно |
