@@ -74,6 +74,9 @@ jobs:
             --collect-all detective_game `
             --add-data "src/detective_game/assets;detective_game/assets" `
             --add-data "src/detective_game/cases;detective_game/cases" `
+            --add-data "VERSION;." `
+            --add-data "VERSION;detective_game" `
+            --hidden-import detective_game._build_version `
             --icon "src/detective_game/assets/images/icon.ico" `
             --version-file build_version_info.txt `
             --manifest build_app.manifest `
@@ -107,6 +110,25 @@ jobs:
             echo "Release $VERSION — Детектив: Блэквил" > release_notes.md
           fi
           cat release_notes.md
+
+      - name: Verify VERSION is bundled (защита от вечного баннера обновления)
+        shell: pwsh
+        run: |
+          $root = "dist/DetectiveBlackville"
+          $candidates = @(
+            "$root/_internal/VERSION",
+            "$root/_internal/detective_game/VERSION",
+            "$root/VERSION"
+          )
+          $found = $candidates | Where-Object { Test-Path $_ }
+          if (-not $found) {
+            Write-Error "VERSION не попал в PyInstaller-сборку — игра снова будет считать себя 0.1.0"
+            Get-ChildItem $root -Force | Format-Table Name
+            exit 1
+          }
+          foreach ($f in $found) {
+            Write-Host "$f -> $((Get-Content $f -Raw).Trim())"
+          }
 
       - name: Generate README and hashes
         continue-on-error: true

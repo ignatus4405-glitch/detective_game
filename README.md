@@ -102,11 +102,20 @@ python launcher.py
 GET https://api.github.com/repos/ignatus4405-glitch/detective_game/releases/latest
 ```
 
-- Если `latest.tag_name > VERSION` — показывается зелёный баннер с кнопкой «Открыть релизы»
-- Уведомление не блокирует игру, можно закрыть крестиком
-- Ручная проверка — **Настройки → Проверить обновления**
+- Если `latest.tag_name > VERSION` — зелёный баннер: **⬇ Скачать → ▶ Установить**
+- Установка идёт **в ту же папку, откуда запущена игра**, и игра перезапускается автоматически
+- Если папка защищена (Program Files) — Windows один раз попросит подтверждение (UAC)
+- Ошибки сети больше не маскируются под «последняя версия»: видно причину
+- После установки игра пишет «Обновление установлено — теперь vX.Y.Z» (или «не установилось» + журнал)
+- Ручная проверка — **Настройки → Проверить обновления**, авто-проверку можно выключить там же
 
-Версия хранится в файле `VERSION` в корне репо и в `src/detective_game/__init__.py`. CI автоматически бампает `VERSION` и создаёт релиз при пуше тега `v*`.
+Версия хранится в файле `VERSION` в корне репо и попадает в exe при сборке (CI + `tools/generate_version_info.py`). CI проверяет синхронизацию с `pyproject.toml` и создаёт релиз при пуше тега `v*`.
+
+### Если обновление не встало
+
+- Обновляетесь с версии **0.1.23 или старше** и запускали игру из распакованного zip? Запустите скачанный `DetectiveBlackville-Setup-0.1.24.exe` вручную и укажите **ту же папку**, где лежит ваш exe — дальше автообновление работает «в свою» папку.
+- Установщик ничего не сделал, игра просто закрылась? Смотрите журнал `%TEMP%\blackville_update.log` — его путь игра показывает при следующем запуске.
+- Настройки → блок обновлений: если написано «Не удалось проверить», это сеть/лимит GitHub, а не «последняя версия».
 
 Подробнее: [docs/UPDATE_SYSTEM.md](docs/UPDATE_SYSTEM.md)
 
@@ -118,9 +127,17 @@ GET https://api.github.com/repos/ignatus4405-glitch/detective_game/releases/late
 
 ```bash
 pip install pyinstaller
-pyinstaller --name DetectiveBlackville --onefile --windowed --add-data "src/detective_game/assets;assets" --add-data "src/detective_game/cases;cases" src/detective_game/main.py
-# exe появится в dist/
+python tools/generate_version_info.py   # вшивает BUILD_VERSION в пакет
+pyinstaller --name DetectiveBlackville --onedir --windowed \
+  --paths src --collect-all detective_game \
+  --add-data "VERSION;." --add-data "VERSION;detective_game" \
+  launcher.py
+# exe появится в dist/DetectiveBlackville/
 ```
+
+> `--add-data "VERSION;."` обязателен: без него собранная игра не найдёт версию
+> и будет считать себя `0.1.0` (вечный баннер обновления). CI это проверяет шагом
+> «Verify VERSION is bundled».
 
 Скрипт: `tools/build.ps1` / `tools/build.sh` (см. [docs/BUILD.md](docs/BUILD.md))
 

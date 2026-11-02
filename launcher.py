@@ -41,7 +41,30 @@ def _show_error(title: str, msg: str):
     # Fallback: stderr
     print(f"[ERROR] {title}: {msg}", file=sys.stderr)
 
+_MUTEX_HANDLE = None
+
+
+def _create_app_mutex():
+    """Создаёт BlackvilleDetectiveMutex — его проверяет установщик (AppMutex).
+
+    Без этого Inno Setup не понимал, что игра запущена, и обновление поверх
+    работающей игры могло молча падать на заблокированных файлах.
+    """
+    global _MUTEX_HANDLE
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        _MUTEX_HANDLE = ctypes.windll.kernel32.CreateMutexW(
+            None, False, "BlackvilleDetectiveMutex"
+        )
+    except Exception:
+        _MUTEX_HANDLE = None
+
+
 def main():
+    _create_app_mutex()
     try:
         from detective_game.main import main as game_main
         return game_main()

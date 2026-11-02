@@ -34,3 +34,14 @@ mt = re.sub(r'(<assemblyIdentity[^>]*\n\s+version=")[^"]+"', rf'\g<1>{version_st
 generated_mf = root / "build_app.manifest"
 generated_mf.write_text(mt, encoding="utf-8")
 print(f"Generated {generated_mf}")
+
+# Версия, вшитая в код — страховка для PyInstaller-сборки, где VERSION-файл
+# может не оказаться рядом (см. detective_game/__init__.py:get_version).
+# Файл генерируемый: не коммитим (см. .gitignore).
+generated_ver = root / "src" / "detective_game" / "_build_version.py"
+generated_ver.write_text(
+    '"""Сгенерировано tools/generate_version_info.py — не редактировать вручную."""\n\n'
+    f'BUILD_VERSION = "{version_str}"\n',
+    encoding="utf-8",
+)
+print(f"Generated {generated_ver}: {version_str}")
