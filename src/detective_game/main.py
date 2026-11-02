@@ -1817,11 +1817,9 @@ class Game:
             # Кнопки: прогресс / скачать / установить
             if checker.downloading:
                 prog = checker.download_progress / 100 if checker.download_total else 0
-                # прогресс-бар
+                # прогресс-бар — процент уже рисуется по центру внутри бара
                 bar_rect = pygame.Rect(upd_rect.x + 12, upd_rect.y + 44, upd_rect.w - 24, 14)
                 draw_progress_bar(self.screen, bar_rect, prog)
-                pct = get_font(9).render(f"{checker.download_progress}%", True, COLOR_TEXT)
-                self.screen.blit(pct, (bar_rect.right + 6, bar_rect.y - 1))
             elif getattr(checker, "downloaded_path", None) and checker.downloaded_path.exists():
                 # Уже скачано — показываем кнопку УСТАНОВИТЬ
                 ok_txt = get_font(9).render(f"✓ Скачано: {checker.downloaded_path.name}", True, (180, 255, 180))
@@ -2006,8 +2004,6 @@ class Game:
                 else checker.download_progress / 100
             )
             draw_progress_bar(self.screen, bar_rect, prog, radius=5)
-            pct = get_font(9, bold=True).render(f"{checker.download_progress}%", True, COLOR_TEXT)
-            self.screen.blit(pct, (bar_rect.right + 8, bar_rect.y - 2))
         elif getattr(checker, "downloaded_path", None) and checker.downloaded_path.exists():
             # СКАЧАНО — показываем УСТАНОВИТЬ прямо на главном экране
             btn_install = Button((rect.right - 220, rect.y + 12, 150, 26), "▶ УСТАНОВИТЬ", style="success")
