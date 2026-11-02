@@ -12,7 +12,7 @@
   #define VERSION GetEnv("VERSION")
 #endif
 #if VERSION == ""
-  #define VERSION "0.1.40"
+  #define VERSION "0.1.41"
 #endif
 #define MyAppVersion VERSION
 #define MyAppExe "DetectiveBlackville.exe"

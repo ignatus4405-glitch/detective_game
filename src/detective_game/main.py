@@ -1506,6 +1506,8 @@ class Game:
         self.state.deductions = set()
         self.state.trial_motive = None
         self.state.trial_method = None
+        self.state.riddles_solved = set()
+        self.state.riddle_tip_shown = False
         self.state.deadline_missed = False
         self.state.calls_seen = 0
         self.state.last_call_minute = 0
