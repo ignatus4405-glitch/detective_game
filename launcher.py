@@ -55,17 +55,32 @@ def main():
         except Exception:
             pass
 
-        # Дружелюбное сообщение вместо "Failed to execute script"
-        friendly = (
-            f"Произошла ошибка при запуске игры:\n\n{e}\n\n"
-            "Что делать:\n"
-            "1. Убедитесь что антивирус не удалил файлы из папки\n"
-            "2. Попробуйте запустить от имени администратора (правый клик → Запуск от имени администратора)\n"
-            "3. Удалите папку %APPDATA%\\BlackvilleDetective и перезапустите\n"
-            "4. Сообщите об ошибке: https://github.com/ignatus4405-glitch/detective_game/issues\n"
-            "   Приложите файл crash.log рядом с exe\n\n"
-            f"Технические детали:\n{tb[:1200]}"
-        )
+        # Анализ типичной ошибки PyInstaller onefile — python DLL не найдена
+        is_dll_error = "Failed to load Python DLL" in str(e) or "python3" in str(e).lower() and ".dll" in str(e).lower() or "_MEI" in tb
+        if is_dll_error:
+            friendly = (
+                f"Не удалось загрузить Python DLL (ошибка распаковки игры):\n\n{e}\n\n"
+                "Это известная проблема однофайловой сборки — антивирус или защита Windows заблокировала временную папку Temp\\_MEI*.\n\n"
+                "Что делать:\n"
+                "1. Добавьте папку игры в исключения антивируса / Защитника Windows\n"
+                "2. Установите Microsoft Visual C++ Redistributable 2015-2022 (x64) с сайта Microsoft\n"
+                "3. Удалите кэш: удалите папки %TEMP%\\_MEI* и %LOCALAPPDATA%\\Programs\\BlackvilleDetective, переустановите игру\n"
+                "4. Попробуйте портативную версию (DetectiveBlackville-Windows.zip) — распаковать в D:\\Games\\ и запустить оттуда\n"
+                "5. Запустите от имени администратора (правый клик → Запуск от имени администратора)\n\n"
+                "Новая версия 0.1.22+ уже использует обычную установку без распаковки в Temp — обновите игру.\n"
+                f"Сообщите об ошибке: https://github.com/ignatus4405-glitch/detective_game/issues\nПриложите crash.log рядом с exe\n\nТехнические детали:\n{tb[:1000]}"
+            )
+        else:
+            friendly = (
+                f"Произошла ошибка при запуске игры:\n\n{e}\n\n"
+                "Что делать:\n"
+                "1. Убедитесь что антивирус не удалил файлы из папки\n"
+                "2. Попробуйте запустить от имени администратора (правый клик → Запуск от имени администратора)\n"
+                "3. Удалите папку %APPDATA%\\BlackvilleDetective и перезапустите\n"
+                "4. Сообщите об ошибке: https://github.com/ignatus4405-glitch/detective_game/issues\n"
+                "   Приложите файл crash.log рядом с exe\n\n"
+                f"Технические детали:\n{tb[:1200]}"
+            )
         _show_error("Детектив: Блэквил — Ошибка", friendly)
         return 1
 
