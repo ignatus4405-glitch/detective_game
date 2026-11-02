@@ -6,6 +6,33 @@ import pygame
 
 from ..config import *
 
+
+def _to_logical_pos(phys_pos, logical_surface):
+    """Перевод физической мыши в логическую для letterbox-режима."""
+    try:
+        disp = pygame.display.get_surface()
+        if disp is None or logical_surface is None:
+            return phys_pos
+        Wp, Hp = disp.get_size()
+        Lw, Lh = logical_surface.get_size()
+        # Если рисуем напрямую на дисплей — координаты совпадают
+        if (Wp, Hp) == (Lw, Lh):
+            return phys_pos
+        # letterbox параметры как в Game._get_letterbox
+        if Wp <= 0 or Hp <= 0 or Lw <= 0 or Lh <= 0:
+            return phys_pos
+        scale = min(Wp / Lw, Hp / Lh)
+        if scale == 0:
+            return phys_pos
+        w = int(Lw * scale)
+        h = int(Lh * scale)
+        ox = (Wp - w) // 2
+        oy = (Hp - h) // 2
+        x, y = phys_pos
+        return (int((x - ox) / scale), int((y - oy) / scale))
+    except Exception:
+        return phys_pos
+
 # ── ШРИФТЫ ───────────────────────────────────────────────────────────────
 _FONT_CACHE = {}
 
@@ -385,7 +412,7 @@ class Dropdown:
             pygame.draw.rect(surface, COLOR_PANEL, list_rect, border_radius=6)
             pygame.draw.rect(surface, COLOR_BORDER, list_rect, width=1, border_radius=6)
             
-            mouse = pygame.mouse.get_pos()
+            mouse = _to_logical_pos(pygame.mouse.get_pos(), surface)
             for i, (val, name) in enumerate(self.options):
                 opt_rect = pygame.Rect(list_rect.x, list_rect.y + i*32, list_rect.w, 32)
                 hovered = opt_rect.collidepoint(mouse)

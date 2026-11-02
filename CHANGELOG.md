@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.23] — 2026-11-02
+
+### Fixed
+- **Кнопки снова кликабельны после letterbox:** `_get_letterbox()` брал размер логического холста вместо физического окна дисплея, из-за чего `_to_logical` возвращал неверные координаты и ни одна кнопка не ловила hover. Исправлено на `pygame.display.get_surface()`. Также добавлен хелпер `_to_logical_pos` в `ui/widgets.py` для выпадающих списков.
+
 ## [0.1.22] — 2026-11-02
 
 ### Fixed
@@ -180,7 +185,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.22...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.23...HEAD
+[0.1.23]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.22...v0.1.23
 [0.1.22]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.21...v0.1.22
 [0.1.21]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.20...v0.1.21
 [0.1.20]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.19...v0.1.20
