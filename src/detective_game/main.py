@@ -5,6 +5,7 @@ import time
 
 import pygame
 
+from . import get_version_source
 from .config import *
 from .data import get_clue, get_location, list_cases, load_case
 from .game_state import AVATARS, BACKGROUNDS, DetectiveProfile, GameState
@@ -33,7 +34,14 @@ from .ui.widgets import (
     render_text,
     safe_text,
 )
-from .updater import UpdateChecker, consume_update_result, install_requires_elevation
+from .updater import (
+    UpdateChecker,
+    consume_update_result,
+    get_app_log_path,
+    install_requires_elevation,
+    log_update,
+    open_app_log,
+)
 
 try:
     from .settings_manager import (
@@ -203,12 +211,15 @@ class Game:
             return
         if result.get("status") == "installed":
             self.add_notification(f"Обновление установлено — теперь v{result['current']}")
-        else:
-            log = result.get("log") or ""
-            hint = f" Журнал: {log}" if log else ""
-            self.add_notification(
-                f"Обновление до v{result.get('target', '?')} не установилось (у вас v{result['current']}).{hint}"
-            )
+            log_update(f"обновление установлено: v{result['current']}")
+            return
+        target = result.get("target", "?")
+        current = result.get("current", "?")
+        log_update(f"обновление до v{target} не установилось (у вас v{current})")
+        self.add_notification(
+            f"Обновление до v{target} не установилось (у вас v{current}). "
+            "Настройки → «Проверить обновления» → «Журнал»"
+        )
 
     def _init_settings_widgets(self):
         # Дропдауны и слайдеры для настроек
@@ -305,6 +316,36 @@ class Game:
     def add_notification(self, text):
         self.notifications.append((text, time.time() + 4))
         print(f"[NOTIFY] {text}")
+
+    def _retry_update_check(self):
+        """Повторная проверка обновлений (в т.ч. после сетевой ошибки)."""
+        self.update_checker = UpdateChecker()
+        self.update_checker.start()
+        self.update_dismissed = False
+        self.add_notification("Проверяем обновления…")
+
+    def _update_diagnostics(self):
+        """Строки диагностики апдейтера для настроек."""
+        from . import __version__ as game_version
+
+        checker = self.update_checker
+        source = get_version_source()
+        source_name = source.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        lines = [f"Версия: v{game_version}  ·  источник: {source_name}"]
+        if checker.checking:
+            lines.append("Проверка: идёт…")
+        elif checker.done and checker.error:
+            lines.append("Проверка: ОШИБКА — подробности в журнале")
+        elif checker.done and checker.result:
+            lines.append(f"Проверка: доступна v{checker.result['latest']} (канал {checker.source})")
+        elif checker.done:
+            lines.append("Проверка: обновлений нет")
+        else:
+            lines.append("Проверка: не выполнялась")
+        if getattr(checker, "download_error", None):
+            lines.append(f"Загрузка: {checker.download_error}")
+        lines.append(f"Журнал: {get_app_log_path()}")
+        return lines
 
     def _install_update(self):
         """Запускает установщик скачанного обновления и выходит из игры.
@@ -2013,19 +2054,74 @@ class Game:
                 self.screen.blit(err_txt, (upd_rect.x + 12, upd_rect.y + 74 - 2))
         elif checker.done and checker.error:
             # Проверка не удалась (нет сети / лимит GitHub) — не врём про «последнюю версию»
-            err = get_font(10).render(
-                f"Не удалось проверить: {checker.error}"[:60], True, COLOR_RED
+            err_rect = pygame.Rect(right.x + 15, ry, right.w - 30, 92)
+            pygame.draw.rect(self.screen, (52, 20, 24), err_rect, border_radius=8)
+            pygame.draw.rect(self.screen, COLOR_RED, err_rect, width=2, border_radius=8)
+            head = get_font(10, bold=True).render("НЕ УДАЛОСЬ ПРОВЕРИТЬ ОБНОВЛЕНИЕ", True, COLOR_RED)
+            self.screen.blit(head, (err_rect.x + 10, err_rect.y + 8))
+            # Причина целиком, максимум 2 строки — переносим по словам
+            draw_text_wrapped(
+                self.screen,
+                str(checker.error),
+                get_font(8),
+                (255, 205, 205),
+                pygame.Rect(err_rect.x + 10, err_rect.y + 24, err_rect.w - 20, 30),
             )
-            self.screen.blit(err, (right.x + 20, ry))
-            hint = get_font(9).render(
-                "Проверьте интернет и нажмите кнопку ещё раз", True, COLOR_TEXT_DARK
+            btn_retry = Button(
+                (err_rect.x + 10, err_rect.y + 58, 150, 26), "ПОВТОРИТЬ ПРОВЕРКУ", style="success"
             )
-            self.screen.blit(hint, (right.x + 20, ry + 18))
+            btn_retry.update(mouse, pressed)
+            btn_retry.draw(self.screen, get_font(8, bold=True))
+            if btn_retry.clicked:
+                self._retry_update_check()
+            btn_log_txt = get_font(8).render("открыть журнал", True, COLOR_ACCENT)
+            log_rect = btn_log_txt.get_rect(topleft=(err_rect.x + 172, err_rect.y + 66))
+            self.screen.blit(btn_log_txt, log_rect)
+            if log_rect.collidepoint(mouse) and pressed:
+                open_app_log()
+        elif checker.done and checker.result and getattr(checker, "download_error", None):
+            # Обновление есть, но скачать не вышло — видно, что именно случилось
+            err_rect = pygame.Rect(right.x + 15, ry, right.w - 30, 86)
+            pygame.draw.rect(self.screen, (52, 20, 24), err_rect, border_radius=8)
+            pygame.draw.rect(self.screen, COLOR_RED, err_rect, width=2, border_radius=8)
+            head = get_font(10, bold=True).render("ОШИБКА ЗАГРУЗКИ ОБНОВЛЕНИЯ", True, COLOR_RED)
+            self.screen.blit(head, (err_rect.x + 10, err_rect.y + 8))
+            draw_text_wrapped(
+                self.screen,
+                str(checker.download_error),
+                get_font(8),
+                (255, 205, 205),
+                pygame.Rect(err_rect.x + 10, err_rect.y + 24, err_rect.w - 20, 30),
+            )
+            btn_retry = Button((err_rect.x + 10, err_rect.y + 56, 120, 26), "ЕЩЁ РАЗ")
+            btn_retry.update(mouse, pressed)
+            btn_retry.draw(self.screen, get_font(8, bold=True))
+            if btn_retry.clicked:
+                checker.download_error = None
+                checker.start_download()
+            btn_log_txt = get_font(8).render("открыть журнал", True, COLOR_ACCENT)
+            log_rect = btn_log_txt.get_rect(topleft=(err_rect.x + 140, err_rect.y + 64))
+            self.screen.blit(btn_log_txt, log_rect)
+            if log_rect.collidepoint(mouse) and pressed:
+                open_app_log()
         elif checker.done and not checker.result:
             # Нет обновлений
             txt = font_small.render("У вас последняя версия ✓", True, COLOR_GREEN)
             self.screen.blit(txt, (right.x + 20, ry))
         ry += 100
+
+        # Диагностика: версия, канал проверки, путь к журналу (для баг-репортов)
+        diag_font = get_font(9)
+        diag_x = right.x + 18
+        for i, line in enumerate(self._update_diagnostics()[:3]):
+            color = COLOR_TEXT_DARK if i < 2 else (150, 150, 165)
+            self.screen.blit(diag_font.render(line[:74], True, color), (diag_x, ry - 2 + i * 16))
+        log_link = get_font(9).render("открыть журнал обновлений →", True, COLOR_ACCENT)
+        log_link_rect = log_link.get_rect(topleft=(diag_x, ry + 50))
+        self.screen.blit(log_link, log_link_rect)
+        if log_link_rect.collidepoint(mouse) and pressed:
+            open_app_log()
+        ry += 78
 
         # Кнопка сброса прогресса — опасная
         btn_wipe = Button(layout.wipe, "СБРОСИТЬ ПРОГРЕСС", style="danger")
@@ -2085,6 +2181,42 @@ class Game:
             # В настройках уже есть детальная панель — баннер не мешаем
             return
         checker = self.update_checker
+        # Сбой проверки — показываем причину на главном экране, а не молчим
+        if checker.done and not checker.result and checker.error:
+            rect = pygame.Rect(WINDOW_WIDTH // 2 - 360, 10, 720, 62)
+            pygame.draw.rect(self.screen, (58, 22, 26), rect, border_radius=8)
+            pygame.draw.rect(self.screen, COLOR_RED, rect, width=2, border_radius=8)
+            head = get_font(11, bold=True).render(
+                "Не удалось проверить обновления", True, (255, 200, 200)
+            )
+            self.screen.blit(head, (rect.x + 15, rect.y + 8))
+            draw_text_wrapped(
+                self.screen,
+                str(checker.error),
+                get_font(9),
+                (235, 190, 190),
+                pygame.Rect(rect.x + 15, rect.y + 24, rect.w - 320, 34),
+            )
+            mouse = self._to_logical(pygame.mouse.get_pos())
+            pressed = pygame.mouse.get_pressed()[0]
+            btn_retry = Button((rect.right - 290, rect.y + 15, 130, 30), "ПОВТОРИТЬ", style="success")
+            btn_retry.update(mouse, pressed)
+            btn_retry.draw(self.screen, get_font(8, bold=True))
+            if btn_retry.clicked:
+                self._retry_update_check()
+                return
+            btn_log = Button((rect.right - 150, rect.y + 15, 90, 30), "Журнал")
+            btn_log.update(mouse, pressed)
+            btn_log.draw(self.screen, get_font(8, bold=True))
+            if btn_log.clicked:
+                open_app_log()
+            close_rect = pygame.Rect(rect.right - 50, rect.y + 15, 30, 30)
+            pygame.draw.rect(self.screen, (90, 45, 50), close_rect, border_radius=4)
+            x_txt = get_font(12, bold=True).render("×", True, (255, 255, 255))
+            self.screen.blit(x_txt, x_txt.get_rect(center=close_rect.center))
+            if close_rect.collidepoint(mouse) and pressed:
+                self.update_dismissed = True
+            return
         banner = None
         if checker.done and checker.result:
             banner = checker.result

@@ -56,6 +56,10 @@ jobs:
             --hidden-import detective_game.ui.widgets `
             --collect-all pygame `
             --collect-all detective_game `
+            --hidden-import requests `
+            --hidden-import certifi `
+            --hidden-import urllib3 `
+            --collect-data certifi `
             --add-data "src/detective_game/assets;detective_game/assets" `
             --add-data "src/detective_game/cases;detective_game/cases" `
             --add-data "VERSION;." `
@@ -85,6 +89,17 @@ jobs:
           }
           foreach ($f in $found) {
             Write-Host "$f -> $((Get-Content $f -Raw).Trim())"
+          }
+
+      - name: Verify certifi CA bundle is bundled (защита от SSL-ошибок апдейтера)
+        shell: pwsh
+        run: |
+          $root = "dist/DetectiveBlackville"
+          $cacert = Get-ChildItem -Path $root -Recurse -Filter "cacert.pem" -ErrorAction SilentlyContinue
+          if (-not $cacert) {
+            Write-Warning "cacert.pem не найден в сборке — апдейтер переключится на системные сертификаты Windows (urllib)"
+          } else {
+            foreach ($f in $cacert) { Write-Host "CA bundle: $($f.FullName) ($($f.Length) bytes)" }
           }
 
       - name: Generate README and hashes
