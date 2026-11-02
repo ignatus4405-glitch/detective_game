@@ -119,8 +119,9 @@ class GameState:
     trial_method: Optional[str] = None
     # срок дела истёк
     deadline_missed: bool = False
-    # сколько анонимных звонков уже было
+    # сколько анонимных звонков уже было и когда звонили в последний раз
     calls_seen: int = 0
+    last_call_minute: int = 0
     # проваленные слежки и день, до которого объект осторожен
     tail_failed: set = field(default_factory=set)
     tail_blocked_until_day: int = 0
@@ -196,6 +197,7 @@ class GameState:
             trial_method=data.get("trial_method"),
             deadline_missed=bool(data.get("deadline_missed", False)),
             calls_seen=int(data.get("calls_seen", 0) or 0),
+            last_call_minute=int(data.get("last_call_minute", 0) or 0),
             tail_failed=set(data.get("tail_failed", []) or []),
             tail_blocked_until_day=int(data.get("tail_blocked_until_day", 0) or 0),
             silenced={str(k): int(v) for k, v in (data.get("silenced", {}) or {}).items()},

@@ -129,3 +129,14 @@ def test_advanced_cases_have_full_trial(case_id):
     state = _state(answer["motive"], answer["method"], suspect=culprit)
     state.current_case_id = case_id
     assert trial.evaluate(case, state)["score"] == 2
+
+
+def test_evaluate_without_answers_scores_zero():
+    """Ни одного выбора — счёт 0, а не «всё совпало с пустым ключом»."""
+    case = load_case("missing_chess")
+    state = GameState()
+    state.accusation_result = None
+    result = trial.evaluate(case, state)
+    assert result["score"] == 0
+    assert result["motive_ok"] is False
+    assert result["method_ok"] is False

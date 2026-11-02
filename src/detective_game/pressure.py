@@ -45,6 +45,7 @@ TAIL_ALERT_MINUTES = 20
 CALL_FIRST_MINUTE = 90
 CALL_EVERY_MINUTES = 150
 CALL_MINUTES = 5
+MAX_CALLS = 3
 CALL_TRAP_CHANCE = 0.4
 CALL_TRAP_MINUTES = 45
 
@@ -155,12 +156,20 @@ def lab_ready(state) -> bool:
 
 
 def call_due(state, case: Optional[Dict]) -> int:
-    """Пора ли звонить анониму: возвращает номер звонка (0 — рано)."""
+    """Пора ли звонить анониму: возвращает номер звонка (0 — рано).
+
+    После каждого звонка следующего ждём не раньше чем через
+    ``CALL_EVERY_MINUTES``: иначе прыжок во времени (ожидание, экспертиза,
+    смена локации) выдавал два звонка подряд в соседних кадрах.
+    """
     if not advanced(case):
         return 0
     seen = int(getattr(state, "calls_seen", 0) or 0)
-    if seen >= 3:
+    if seen >= MAX_CALLS:
+        return 0
+    spent = int(getattr(state, "case_time_minutes", 0) or 0)
+    last = int(getattr(state, "last_call_minute", 0) or 0)
+    if seen and last and spent - last < CALL_EVERY_MINUTES:
         return 0
     at = CALL_FIRST_MINUTE + seen * CALL_EVERY_MINUTES
-    spent = int(getattr(state, "case_time_minutes", 0) or 0)
     return seen + 1 if spent >= at else 0

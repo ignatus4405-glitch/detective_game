@@ -43,19 +43,23 @@ def start(game, location_id: str | None = None) -> None:
     game.audio.play_sfx("page")
 
 
-def stop(game, reason: str = "") -> None:
+def stop(game, reason: str = "", minutes: int | None = None) -> None:
     """Закончить обыск: время за попытку и уведомление."""
     session = getattr(game, "search", None)
     if not session:
         return
-    game.state.case_time_minutes += SEARCH_MINUTES
-    if session.expired or reason == "time":
-        text = "Время вышло — хозяин вернулся. Попытка стоила 10 минут."
+    spent = SEARCH_MINUTES if minutes is None else max(0, int(minutes))
+    game.state.case_time_minutes += spent
+    caught = bool(getattr(session, "caught", False))
+    if caught:
+        text = f"Патруль заметил вас — обыск прерван. Потеряно {spent} минут."
+    elif session.expired or reason == "time":
+        text = f"Время вышло — хозяин вернулся. Попытка стоила {spent} минут."
     elif session.clue_spots_left == 0 and session.found_count:
-        text = "Вы нашли всё, что здесь было. +10 минут."
+        text = f"Вы нашли всё, что здесь было. +{spent} минут."
     else:
-        text = "Вы закончили обыск. +10 минут."
-    if reason:
+        text = f"Вы закончили обыск. +{spent} минут."
+    if reason and not caught:
         text = reason
     game.add_notification(text)
     game.search = None
@@ -116,13 +120,23 @@ def draw_overlay(game, visual: pygame.Rect) -> None:
         pygame.draw.circle(surface, (60, 60, 70), (cx, cy), radius, 2)
         pygame.draw.circle(surface, (18, 18, 24), (cx, cy), max(2, radius // 3))
         if pygame.Rect(cx - radius, cy - radius, radius * 2, radius * 2).collidepoint(mouse):
-            label = get_font(9, bold=True).render(
-                "ОБЫСКАТЬ" if spot["kind"] == "clue" else "ПРОВЕРИТЬ", True, (18, 18, 18)
+            guarded = getattr(session, "patrol_on", False) and session.in_patrol(
+                spot["x"], spot["y"]
             )
-            chip = pygame.Rect(0, 0, label.get_width() + 10, 16)
-            chip.center = (cx, cy - radius - 14)
-            pygame.draw.rect(surface, col, chip, border_radius=8)
-            surface.blit(label, (chip.x + 5, chip.y + 3))
+            if guarded:
+                label = get_font(9, bold=True).render("ПАТРУЛЬ", True, (250, 220, 220))
+                chip = pygame.Rect(0, 0, label.get_width() + 10, 16)
+                chip.center = (cx, cy - radius - 14)
+                pygame.draw.rect(surface, (150, 50, 50), chip, border_radius=8)
+                surface.blit(label, (chip.x + 5, chip.y + 3))
+            else:
+                label = get_font(9, bold=True).render(
+                    "ОБЫСКАТЬ" if spot["kind"] == "clue" else "ПРОВЕРИТЬ", True, (18, 18, 18)
+                )
+                chip = pygame.Rect(0, 0, label.get_width() + 10, 16)
+                chip.center = (cx, cy - radius - 14)
+                pygame.draw.rect(surface, col, chip, border_radius=8)
+                surface.blit(label, (chip.x + 5, chip.y + 3))
     # таймер и счёт
     seconds = int(math.ceil(session.remaining))
     bar = pygame.Rect(visual.x + 10, visual.y + 10, visual.w - 20, 30)
