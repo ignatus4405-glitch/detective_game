@@ -17,6 +17,6 @@ def get_version() -> str:
         return "0.1.0"
 
 __version__ = get_version()
-__author__ = "Blackville Studio"
+__author__ = "Sams_studio128"
 __game_title__ = "ДЕТЕКТИВ: БЛЭКВИЛ"
 __game_subtitle__ = "Код Города — нуар-расследование 80-х"

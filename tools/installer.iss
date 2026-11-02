@@ -4,14 +4,14 @@
 
 #define MyAppName "Детектив: Блэквил — Код Города"
 #define MyAppShort "DetectiveBlackville"
-#define MyAppPublisher "Blackville Studio"
+#define MyAppPublisher "Sams_studio128"
 #define MyAppURL "https://github.com/ignatus4405-glitch/detective_game"
 #define MyAppId "{{8B1A2F3C-4D5E-6F78-90AB-CDEF12345678}"
 #ifndef VERSION
   #define VERSION GetEnv("VERSION")
 #endif
 #if VERSION == ""
-  #define VERSION "0.1.12"
+  #define VERSION "0.1.13"
 #endif
 #define MyAppVersion VERSION
 #define MyAppExe "DetectiveBlackville.exe"
@@ -47,7 +47,7 @@ MinVersion=10.0
 VersionInfoVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Детектив: Блэквил — нуар-расследование в городе Блэквил
-VersionInfoCopyright=© 2026 Blackville Studio
+VersionInfoCopyright=© 2026 Sams_studio128
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 CloseApplications=yes
@@ -59,7 +59,7 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 Name: "quicklaunchicon"; Description: "Закрепить на панели задач"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 0,0
 
 [Files]
@@ -71,10 +71,11 @@ Source: "..\dist\latest.json"; DestDir: "{app}"; Flags: ignoreversion skipifsour
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; IconFilename: "{app}\{#MyAppExe}"; Comment: "Нуар-расследование в Блэквиле, 1987"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; IconFilename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"; Comment: "Нуар-расследование в Блэквиле, 1987"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{group}\Репозиторий на GitHub"; Filename: "{#MyAppURL}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon; IconFilename: "{app}\{#MyAppExe}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon; IconFilename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
+Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon; IconFilename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
 
 [Run]
 Filename: "{app}\{#MyAppExe}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent unchecked

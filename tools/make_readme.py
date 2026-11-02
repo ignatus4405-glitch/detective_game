@@ -57,11 +57,11 @@ https://github.com/ignatus4405-glitch/detective_game
   • Не сохраняется — проверьте права на %APPDATA%
   Вопросы: https://github.com/ignatus4405-glitch/detective_game/issues
 
-ЛИЦЕНЗИЯ: MIT (c) 2026 Blackville Studio
+ЛИЦЕНЗИЯ: MIT (c) 2026 Sams_studio128
 Оригинал вдохновения: https://kodgoroda.games
 
 Приятного расследования, детектив!
-— Blackville Studio, 2026
+— Sams_studio128, 2026
 """
 
 out_dir = ROOT / "dist"

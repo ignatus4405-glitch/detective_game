@@ -1,11 +1,11 @@
 [project]
 name = "detective-game-blackville"
-version = "0.1.12"
+version = "0.1.13"
 description = "Детективная игра в стиле нуар 80-х — интерактивное расследование по мотивам 'Код Города'. Windows, Pygame."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [{name = "Blackville Studio", email = "ignatus.4405@gmail.com"}]
+authors = [{name = "Sams_studio128", email = "ignatus.4405@gmail.com"}]
 keywords = ["detective", "noir", "game", "pygame", "visual-novel"]
 classifiers = [
   "Development Status :: 4 - Beta",
