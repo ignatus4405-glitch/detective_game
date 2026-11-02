@@ -224,7 +224,34 @@ class Button:
             shadow = font.render(full_text, True, (0,0,0,80))
             surface.blit(shadow, (self.rect.centerx - txt.get_width()//2 + 1, self.rect.centery - txt.get_height()//2 + 1 + offset))
         surface.blit(txt, (self.rect.centerx - txt.get_width()//2, self.rect.centery - txt.get_height()//2 + offset))
-        
+
+        # Ярлычок-тултип при наведении (значение кнопки)
+        if self.tooltip and self.hovered and self.enabled:
+            tip_font = get_font(10)
+            tw, th = tip_font.size(self.tooltip)
+            pad_x, pad_y = 8, 4
+            # Позиция над кнопкой, по центру
+            tx = self.rect.centerx - tw // 2 - pad_x
+            ty = self.rect.y - th - 10 - pad_y
+            # Не выходить за края экрана
+            sw, sh = surface.get_size()
+            tx = max(4, min(tx, sw - tw - pad_x * 2 - 4))
+            ty = max(4, ty)
+            bg_rect = pygame.Rect(tx, ty, tw + pad_x * 2, th + pad_y * 2)
+            # Фон тултипа
+            pygame.draw.rect(surface, (28, 28, 36), bg_rect, border_radius=4)
+            pygame.draw.rect(surface, COLOR_ACCENT_DIM, bg_rect, width=1, border_radius=4)
+            # Стрелочка вниз
+            arrow_pts = [
+                (self.rect.centerx, self.rect.y - 4),
+                (self.rect.centerx - 5, self.rect.y - 9),
+                (self.rect.centerx + 5, self.rect.y - 9),
+            ]
+            # Ограничить стрелку внутри тултипа
+            pygame.draw.polygon(surface, (28, 28, 36), arrow_pts)
+            pygame.draw.polygon(surface, COLOR_ACCENT_DIM, arrow_pts, width=1)
+            surface.blit(tip_font.render(self.tooltip, True, COLOR_TEXT), (tx + pad_x, ty + pad_y))
+
         # Тень кнопки
         if style.get("shadow") and self.enabled and not self.pressed:
             shadow_rect = pygame.Rect(self.rect.x+2, self.rect.y+2, self.rect.w, self.rect.h)
