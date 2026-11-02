@@ -73,7 +73,12 @@ class Game:
     def _get_letterbox(self):
         """Возвращает (scale, ox, oy, w, h) для letterbox-масштабирования."""
         try:
-            Wp, Hp = self.screen.get_size()
+            # Важно: брать физический размер окна дисплея, а не логического холста
+            surf = pygame.display.get_surface()
+            if surf is not None:
+                Wp, Hp = surf.get_size()
+            else:
+                Wp, Hp = self.screen.get_size()
         except Exception:
             Wp, Hp = WINDOW_WIDTH, WINDOW_HEIGHT
         Lw, Lh = self.LOGICAL_W, self.LOGICAL_H
