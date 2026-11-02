@@ -143,11 +143,24 @@ BUILTIN_CASES: List[Dict] = [
 ]
 
 def load_case(case_id: str) -> Optional[Dict]:
-    # сначала пробуем файлы
+    # сначала пробуем файл с именем = id (быстрый путь)
     file_path = CASES_DIR / f"{case_id}.json"
     if file_path.exists():
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    # затем ищем дело по полю id среди всех файлов (например, example.json)
+    if CASES_DIR.exists():
+        for p in CASES_DIR.glob("*.json"):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    case = json.load(f)
+            except Exception:
+                continue
+            if isinstance(case, dict) and case.get("id") == case_id:
+                return case
     # затем встроенные
     for c in BUILTIN_CASES:
         if c["id"] == case_id:

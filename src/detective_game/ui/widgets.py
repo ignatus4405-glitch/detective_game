@@ -50,6 +50,180 @@ def _get_bundled_font_path(bold=False) -> Path | None:
             return sys_path
     return None
 
+_SAFE_TEXT_CACHE = {}
+
+
+_GLYPH_CACHE = {}
+_NOTDEF_CACHE = {}
+
+
+def _notdef_signature(font):
+    """Пиксельный «слепок» отсутствующего глифа (тофу) для этого шрифта."""
+    key = id(font)
+    if key in _NOTDEF_CACHE:
+        return _NOTDEF_CACHE[key]
+    try:
+        surf = font.render("\ue000", True, (255, 255, 255))
+        signature = pygame.image.tostring(surf, "RGBA")
+    except Exception:
+        signature = None
+    _NOTDEF_CACHE[key] = signature
+    return signature
+
+
+def supports_glyph(font, char: str) -> bool:
+    """Умеет ли шрифт реально нарисовать символ.
+
+    Одних `font.metrics()` мало: DejaVu отдаёт валидные метрики для символов,
+    которых у него нет (⛶, ⚠), и они рисуются пустым квадратиком. Поэтому
+    сравниваем отрисованный символ с эталонным «тофу».
+    """
+    if not char or char.isspace():
+        return True
+    key = (id(font), char)
+    cached = _GLYPH_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        metrics = font.metrics(char)
+        if not metrics or metrics[0] is None:
+            _GLYPH_CACHE[key] = False
+            return False
+        signature = pygame.image.tostring(font.render(char, True, (255, 255, 255)), "RGBA")
+        result = signature != _notdef_signature(font)
+    except Exception:
+        result = True
+    if len(_GLYPH_CACHE) > 1024:
+        _GLYPH_CACHE.clear()
+    _GLYPH_CACHE[key] = result
+    return result
+
+
+def safe_text(font, text: str) -> str:
+    """Убирает символы, которых нет в шрифте (эмодзи в DejaVu и т.п.).
+
+    В бандле лежит DejaVuSans — эмодзи-глифов в нём нет, поэтому на кнопках
+    появлялись пустые квадратики.
+    """
+    if not text:
+        return text
+    key = (id(font), text)
+    cached = _SAFE_TEXT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    cleaned = []
+    for char in text:
+        if char.isspace() or supports_glyph(font, char):
+            cleaned.append(char)
+        elif cleaned and not cleaned[-1].isspace():
+            cleaned.append(" ")
+    result = " ".join("".join(cleaned).split())
+    if len(_SAFE_TEXT_CACHE) > 512:
+        _SAFE_TEXT_CACHE.clear()
+    _SAFE_TEXT_CACHE[key] = result
+    return result
+
+
+def render_text(font, text, color):
+    """font.render с безопасным текстом — эмодзи не превращаются в квадраты."""
+    return font.render(safe_text(font, text), True, color)
+
+
+_EMOJI_FONT_CACHE = {}
+_EMOJI_FONT_LOOKED_UP = False
+_EMOJI_FONT_PATH = None
+
+
+def _find_emoji_font_path():
+    """Ищет системный эмодзи-шрифт: в бандле DejaVu, а эмодзи-глифов в нём нет."""
+    global _EMOJI_FONT_LOOKED_UP, _EMOJI_FONT_PATH
+    if _EMOJI_FONT_LOOKED_UP:
+        return _EMOJI_FONT_PATH
+    _EMOJI_FONT_LOOKED_UP = True
+    candidates = [
+        "C:/Windows/Fonts/seguiemj.ttf",
+        "C:/Windows/Fonts/seguisym.ttf",
+        "/System/Library/Fonts/Apple Color Emoji.ttc",
+        "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+        "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
+        "/usr/share/fonts/opentype/noto/NotoColorEmoji.ttf",
+    ]
+    try:
+        import pygame.font as _pf
+
+        candidates += [str(p) for p in _pf.get_fonts() if "emoji" in str(p).lower()]
+    except Exception:
+        pass
+    for candidate in candidates:
+        try:
+            if Path(candidate).exists():
+                _EMOJI_FONT_PATH = candidate
+                break
+        except Exception:
+            continue
+    return _EMOJI_FONT_PATH
+
+
+def get_emoji_font(size):
+    """Шрифт с эмодзи или None, если в системе такого нет."""
+    path = _find_emoji_font_path()
+    if not path:
+        return None
+    key = (path, size)
+    if key in _EMOJI_FONT_CACHE:
+        return _EMOJI_FONT_CACHE[key]
+    try:
+        font = pygame.font.Font(path, size)
+    except Exception:
+        font = None
+    _EMOJI_FONT_CACHE[key] = font
+    return font
+
+
+def draw_icon(surface, text, center, size, color=(200, 200, 210), fallback=""):
+    """Иконка-эмодзи с надёжным запасным вариантом.
+
+    Если эмодзи-шрифта в системе нет (частый случай для сборки с DejaVu),
+    рисуется нуар-бейдж с первой буквой — вместо пустого квадратика.
+    """
+    emoji_font = get_emoji_font(size)
+    if emoji_font is not None and text and supports_glyph(emoji_font, text[0]):
+        try:
+            surf = emoji_font.render(text, True, color)
+        except Exception:
+            surf = None
+        # цветные эмодзи (Segoe UI Emoji) SDL_ttf может отрисовать пустым —
+        # проверяем, что пиксели реально появились, иначе рисуем бейдж
+        if surf is not None and surf.get_bounding_rect(min_alpha=1).w > 0:
+            surface.blit(surf, surf.get_rect(center=center))
+            return
+    letter = (fallback or text or "?").strip()[:1].upper()
+    radius = max(10, size // 2)
+    badge = pygame.Rect(0, 0, radius * 2, radius * 2)
+    badge.center = center
+    pygame.draw.circle(surface, (26, 26, 34), center, radius)
+    pygame.draw.circle(surface, COLOR_ACCENT_DIM, center, radius, width=2)
+    font = get_font(max(12, int(radius * 1.1)), bold=True)
+    surf = font.render(letter, True, color)
+    surface.blit(surf, surf.get_rect(center=center))
+
+
+def draw_die_icon(surface, rect, color=COLOR_ACCENT, pip_color=(16, 16, 20), size=24):
+    """Рисует кубик примитивами: эмодзи 🎲 в шрифте нет, поэтому рисуем сами."""
+    size = max(12, min(size, min(rect.w, rect.h) - 8))
+    box = pygame.Rect(0, 0, size, size)
+    box.center = rect.center
+    radius = max(4, size // 5)
+    pygame.draw.rect(surface, (40, 40, 52), box, border_radius=radius)
+    pygame.draw.rect(surface, color, box, width=2, border_radius=radius)
+    r = max(2, size // 10)
+    off = size // 4
+    for dx, dy in ((-1, -1), (1, -1), (0, 0), (-1, 1), (1, 1)):
+        center = (box.centerx + dx * off, box.centery + dy * off)
+        pygame.draw.circle(surface, pip_color, center, r)
+        pygame.draw.circle(surface, color, center, r, width=1)
+
+
 def get_font(size, bold=False):
     key = (size, bold)
     if key in _FONT_CACHE:
@@ -245,10 +419,10 @@ class Button:
         
         # Текст + иконка
         full_text = f"{self.icon} {self.text}" if self.icon and self.icon not in self.text else self.text
-        txt = font.render(full_text, True, tcol if 'tcol' in locals() else COLOR_TEXT)
+        txt = render_text(font, full_text, tcol if 'tcol' in locals() else COLOR_TEXT)
         # Тень текста для глубины
         if self.enabled and self.style in ["primary", "danger", "success"]:
-            shadow = font.render(full_text, True, (0,0,0,80))
+            shadow = render_text(font, full_text, (0,0,0,80))
             surface.blit(shadow, (self.rect.centerx - txt.get_width()//2 + 1, self.rect.centery - txt.get_height()//2 + 1 + offset))
         surface.blit(txt, (self.rect.centerx - txt.get_width()//2, self.rect.centery - txt.get_height()//2 + offset))
 
@@ -277,7 +451,7 @@ class Button:
             # Ограничить стрелку внутри тултипа
             pygame.draw.polygon(surface, (28, 28, 36), arrow_pts)
             pygame.draw.polygon(surface, COLOR_ACCENT_DIM, arrow_pts, width=1)
-            surface.blit(tip_font.render(self.tooltip, True, COLOR_TEXT), (tx + pad_x, ty + pad_y))
+            surface.blit(render_text(tip_font, self.tooltip, COLOR_TEXT), (tx + pad_x, ty + pad_y))
 
         # Тень кнопки
         if style.get("shadow") and self.enabled and not self.pressed:
@@ -322,7 +496,7 @@ class TextInput:
         pygame.draw.rect(surface, border, self.rect, width=2 if self.active else 1, border_radius=8)
         txt = self.text if self.text else self.placeholder
         tcol = COLOR_TEXT if self.text else COLOR_TEXT_DIM
-        surf = font.render(txt, True, tcol)
+        surf = render_text(font, txt, tcol)
         surface.blit(surf, (self.rect.x+14, self.rect.y + (self.rect.h - surf.get_height())//2))
         if self.active:
             self.cursor_timer = (self.cursor_timer + 1) % 60
@@ -593,7 +767,7 @@ def draw_avatar(surface, rect, avatar_data, selected=False):
     
     # Плашка с именем — градиентная
     font_small = get_font(10, bold=True)
-    name_surf = font_small.render(avatar_data["name"], True, (255,255,255))
+    name_surf = render_text(font_small, avatar_data["name"], (255,255,255))
     bg_rect = pygame.Rect(rect.x, rect.bottom - 22, rect.w, 22)
     # Градиент плашки
     grad = pygame.Surface((bg_rect.w, bg_rect.h), pygame.SRCALPHA)
