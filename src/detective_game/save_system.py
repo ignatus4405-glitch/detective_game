@@ -78,9 +78,9 @@ def save_settings(settings: dict):
 def load_settings() -> dict:
     path = get_save_dir() / SETTINGS_FILE
     if not path.exists():
-        return {"sfx_volume": 0.7, "music_volume": 0.5, "fullscreen": False, "lang": "ru"}
+        return {"sfx_volume": 0.7, "music_volume": 0.5, "voice_enabled": True, "fullscreen": False, "lang": "ru"}
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return {"sfx_volume": 0.7, "music_volume": 0.5, "fullscreen": False, "lang": "ru"}
+        return {"sfx_volume": 0.7, "music_volume": 0.5, "voice_enabled": True, "fullscreen": False, "lang": "ru"}
