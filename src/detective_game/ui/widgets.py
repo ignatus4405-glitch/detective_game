@@ -224,6 +224,19 @@ def draw_die_icon(surface, rect, color=COLOR_ACCENT, pip_color=(16, 16, 20), siz
         pygame.draw.circle(surface, color, center, r, width=1)
 
 
+def reset_font_caches() -> None:
+    """Сбрасывает кэши шрифтов и проверок глифов.
+
+    Объекты ``pygame.font.Font`` живут только до ``pygame.quit()``: если игра
+    (или тест) выходит и запускается заново в том же процессе, кэш держал бы
+    указатели на освобождённые шрифты — отрисовка падала с segfault.
+    """
+    _FONT_CACHE.clear()
+    _GLYPH_CACHE.clear()
+    _NOTDEF_CACHE.clear()
+    _EMOJI_FONT_CACHE.clear()
+
+
 def get_font(size, bold=False):
     key = (size, bold)
     if key in _FONT_CACHE:

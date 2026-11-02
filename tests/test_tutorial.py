@@ -484,3 +484,16 @@ def test_blit_rounded_handles_missing_image():
 
     surface = pygame.Surface((40, 40))
     assert _blit_rounded(surface, None, pygame.Rect(0, 0, 40, 40)) is False
+
+
+def test_font_caches_survive_pygame_restart():
+    """После pygame.quit()/init() шрифты из кэша недействительны — их надо сбросить."""
+    from detective_game.ui import widgets
+
+    widgets.get_font(12)
+    assert widgets._FONT_CACHE, "кэш шрифтов должен наполняться"
+    widgets.reset_font_caches()
+    assert widgets._FONT_CACHE == {}
+    assert widgets._GLYPH_CACHE == {}
+    font = widgets.get_font(12)
+    assert font.render("тест", True, (255, 255, 255)).get_width() > 0
