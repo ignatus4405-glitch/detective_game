@@ -6,6 +6,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.17] — 2026-11-02
+
+### Fixed
+- **Меню по центру в экранном режиме:** `draw_menu`, `draw_city_background`, `draw_notifications` теперь используют реальный размер окна `W,H = screen.get_size()` вместо фиксированных 1280×720. Панель 720×520 всегда центрируется (`W//2-360, H//2-260`), туман и сетка покрывают весь экран в полноэкранном/бордерлес режиме.
+
+### Added
+- **Генерация имени в кастомизации:** добавлены пулы `AVATAR_NAME_POOLS` (6 вариантов на аватар) и `get_random_name_for_avatar()`. При клике на портрет имя автоматически генерируется для этого образа; добавлена кнопка **🎲** рядом с полем ввода — случайное имя для выбранного фото с уведомлением.
+- **Кнопки с ярлычками:** `Button` теперь поддерживает `tooltip` с автопозиционированием над кнопкой (тёмная плашка + золотая рамка + стрелочка). Добавлены тултипы: «Продолжить сохранённую игру», «Начать новую историю», «Экран, звук и обновления», «Внешность и прошлое детектива», «Выйти…», «← Назад», «Сохранить…». Для «Прошлого» — тултип при наведении на каждую кнопку показывает её бонус; для поля ввода — подсказка про 🎲.
+
+### Changed
+- **Убран ценник в задании:** в `draw_case_select` кнопка теперь только **«ВЗЯТЬ ДЕЛО»** без ` — price`. При наведении цена показывается маленьким тултипом над кнопкой.
+
+
 ## [0.1.16] — 2026-11-02
 
 ### Fixed
@@ -136,7 +149,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.16...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.17...HEAD
+[0.1.17]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.15...v0.1.16
 [0.1.15]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.13...v0.1.14
