@@ -13,7 +13,6 @@ from detective_game import audio as audio_mod  # noqa: E402
 from detective_game import synth  # noqa: E402
 from detective_game.audio import MUSIC_TRACKS, SFX_NAMES, AudioEngine  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Синтез
 # ---------------------------------------------------------------------------
