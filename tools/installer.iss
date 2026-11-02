@@ -12,7 +12,7 @@
   #define VERSION GetEnv("VERSION")
 #endif
 #if VERSION == ""
-  #define VERSION "0.1.25"
+  #define VERSION "0.1.26"
 #endif
 #define MyAppVersion VERSION
 #define MyAppExe "DetectiveBlackville.exe"
@@ -104,7 +104,9 @@ Type: filesandordirs; Name: "{app}\__pycache__"
 [Code]
 function ShouldAutoLaunch(): Boolean;
 begin
-  Result := WizardSilent or (ExpandConstant('{param:AUTOLAUNCH|0}') = '1');
+  // Только тихая установка: в интерактивном мастере игру запускает штатная
+  // запись [Run] с галочкой, иначе после обновления открывались ДВА окна игры.
+  Result := WizardSilent and (ExpandConstant('{param:AUTOLAUNCH|0}') = '1');
 end;
 
 function InitializeSetup(): Boolean;
