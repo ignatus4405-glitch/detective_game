@@ -98,14 +98,16 @@ def evaluate(case: Optional[Dict], state) -> Dict:
     key = answers(case, suspect)
     motive = selected(state, MOTIVE)
     method = selected(state, METHOD)
+    motive_ok = bool(motive) and motive == key.get(MOTIVE)
+    method_ok = bool(method) and method == key.get(METHOD)
     return {
         "asked": True,
         "answered": answered(state),
         "motive": motive,
         "method": method,
-        "motive_ok": bool(motive) and motive == key.get(MOTIVE),
-        "method_ok": bool(method) and method == key.get(METHOD),
-        "score": int(motive == key.get(MOTIVE)) + int(method == key.get(METHOD)),
+        "motive_ok": motive_ok,
+        "method_ok": method_ok,
+        "score": int(motive_ok) + int(method_ok),
         "correct": key,
     }
 

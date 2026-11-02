@@ -58,8 +58,8 @@ def can_accuse(state, case: Optional[Dict]) -> bool:
 
 
 def clue_hint(state, case: Optional[Dict]) -> str:
-    """Подсказка для кнопки «Обвинить»."""
-    have = len(getattr(state, "collected_clues", None) or set())
+    """Подсказка для кнопки «Обвинить» (в больших делах — счёт суда)."""
+    have = clue_count(state, case)
     need = required_clues(case)
     if have <= 0:
         return "Найдите хотя бы одну улику"
@@ -133,6 +133,11 @@ def matches(requires: Optional[Dict], state, case: Dict) -> bool:
 
         if len(expertise.court_clues(case, state)) < int(requires["min_confirmed"]):
             return False
+    if requires.get("trial_correct"):
+        from . import trial
+
+        if trial.evaluate(case, state).get("score") != 2:
+            return False
     return True
 
 
@@ -179,6 +184,20 @@ def _fallback(case: Dict, suspect: Optional[Dict]) -> Dict:
     }
 
 
+def _late_ending() -> Dict:
+    """Срок истёк так, что прокурор закрыл дело сам."""
+    return {
+        "success": False,
+        "title": "Опоздал",
+        "text": (
+            "Вы тянули слишком долго: прокурор подписал отказ и закрыл дело. "
+            "Виновный успел замести следы, а в газете вышла заметка «Детектив, "
+            "который не успел». Улик было много — времени не хватило."
+        ),
+        "rank": "F",
+    }
+
+
 # ранг выше — если игрок восстановил хронологию перед обвинением
 RANK_UP = {"F": "D", "D": "C", "C": "B", "B": "A", "A": "S", "S": "S+", "S+": "S+"}
 RANK_DOWN = {"S+": "S", "S": "A", "A": "B", "B": "C", "C": "D", "D": "F", "F": "F"}
@@ -217,7 +236,12 @@ def resolve(case: Optional[Dict], state) -> Dict:
     suspect = suspect_of(case, getattr(state, "accusation_result", None))
     base = (case.get("endings") or {}).get(suspect.get("id") if suspect else None)
     if not base:
-        base = _fallback(case, suspect)
+        from . import pressure
+
+        if suspect is None and pressure.advanced(case) and pressure.is_late(state, case):
+            base = _late_ending()
+        else:
+            base = _fallback(case, suspect)
     result = {
         "success": bool(base.get("success", False)),
         "title": base.get("title", "Финал"),

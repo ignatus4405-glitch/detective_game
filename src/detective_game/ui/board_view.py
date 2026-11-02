@@ -215,7 +215,8 @@ def handle_board_click(game, pos) -> bool:
         if pressure.advanced(case) and testimony.available(case, state):
             game.testimony_selected = []
             game.testimony_message = ""
-            game.testimony_return = "board"
+            game.testimony_scroll = 0
+            game.testimony_return = "notebook"
             game.screen_name = "testimony"
             game.audio.play_sfx("page")
         else:

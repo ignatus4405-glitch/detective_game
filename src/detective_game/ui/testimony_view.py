@@ -27,13 +27,37 @@ from ..save_system import save_game
 from .widgets import Button, draw_panel, draw_text_wrapped, get_font
 
 ROW_HEIGHT = 62
-MAX_ROWS = 6
+MAX_ROWS = 7
+SCROLL_WHEEL = 2
 
 
 def rows(game):
     """Строки списка реплик и прямоугольники под них."""
     case = game.current_case or {}
     return testimony.statements(case, game.state)
+
+
+def scroll_limit(game) -> int:
+    """Максимальное смещение списка реплик."""
+    return max(0, len(rows(game)) - MAX_ROWS)
+
+
+def scroll(game, delta: int) -> int:
+    """Прокрутить список реплик и вернуть новое смещение."""
+    limit = scroll_limit(game)
+    current = int(getattr(game, "testimony_scroll", 0) or 0)
+    current = max(0, min(current + int(delta), limit))
+    game.testimony_scroll = current
+    return current
+
+
+def visible_rows(game):
+    """(видимые строки, смещение, всего строк) — с прокруткой."""
+    everything = rows(game)
+    limit = max(0, len(everything) - MAX_ROWS)
+    offset = max(0, min(int(getattr(game, "testimony_scroll", 0) or 0), limit))
+    game.testimony_scroll = offset
+    return everything[offset : offset + MAX_ROWS], offset, len(everything)
 
 
 def draw_testimony(game) -> None:
@@ -66,12 +90,49 @@ def draw_testimony(game) -> None:
 
     mouse = game._to_logical(pygame.mouse.get_pos())
     pressed = pygame.mouse.get_pressed()[0]
-    game.testimony_rects = {"rows": {}, "compare": None, "reset": None, "back": None}
+    game.testimony_rects = {
+        "rows": {},
+        "compare": None,
+        "reset": None,
+        "back": None,
+        "up": None,
+        "down": None,
+    }
 
-    surface.blit(
-        get_font(12, bold=True).render("УСЛЫШАННЫЕ РЕПЛИКИ", True, COLOR_TEXT),
-        (left.x, left.y),
-    )
+    section = get_font(12, bold=True).render("УСЛЫШАННЫЕ РЕПЛИКИ", True, COLOR_TEXT)
+    surface.blit(section, (left.x, left.y))
+    shown, offset, total_rows = visible_rows(game)
+    if total_rows > MAX_ROWS:
+        counter = get_font(10, bold=True).render(
+            f"{offset + 1}–{offset + len(shown)} из {total_rows}", True, COLOR_TEXT_DIM
+        )
+        surface.blit(counter, (left.x + section.get_width() + 12, left.y + 1))
+        up = pygame.Rect(left.right - 54, left.y - 4, 24, 22)
+        down = pygame.Rect(left.right - 26, left.y - 4, 24, 22)
+        for rect, arrow, enabled, delta in (
+            (up, "▲", offset > 0, -MAX_ROWS),
+            (down, "▼", offset + MAX_ROWS < total_rows, MAX_ROWS),
+        ):
+            hovered = rect.collidepoint(mouse)
+            pygame.draw.rect(
+                surface,
+                (48, 42, 28) if hovered and enabled else (28, 28, 36),
+                rect,
+                border_radius=5,
+            )
+            pygame.draw.rect(
+                surface,
+                COLOR_ACCENT if enabled else (62, 62, 74),
+                rect,
+                width=1,
+                border_radius=5,
+            )
+            label = get_font(10, bold=True).render(
+                arrow, True, COLOR_ACCENT if enabled else COLOR_TEXT_DARK
+            )
+            surface.blit(label, label.get_rect(center=rect.center))
+            if enabled:
+                game.testimony_rects["up" if delta < 0 else "down"] = rect
     if not rows(game):
         draw_text_wrapped(
             surface,
@@ -81,7 +142,7 @@ def draw_testimony(game) -> None:
             pygame.Rect(left.x, left.y + 30, left.w, 80),
         )
     y = left.y + 26
-    for item in rows(game)[:MAX_ROWS]:
+    for item in shown:
         rect = pygame.Rect(left.x, y, left.w, ROW_HEIGHT)
         selected = item["key"] in game.testimony_selected
         hovered = rect.collidepoint(mouse)
@@ -98,9 +159,18 @@ def draw_testimony(game) -> None:
             pygame.Rect(rect.x + 10, rect.y + 24, rect.w - 20, 34),
         )
         game.testimony_rects["rows"][item["key"]] = rect
-        if rect.collidepoint(mouse) and pressed and game._click_once():
-            _toggle(game, item["key"])
         y += ROW_HEIGHT + 6
+
+    # выбранные реплики видны всегда — даже если список прокрутили
+    if game.testimony_selected:
+        picked = []
+        for key in game.testimony_selected:
+            item = testimony.statement(case, key) or {}
+            picked.append(item.get("char", "?"))
+        line = get_font(10, bold=True).render(
+            "Выбрано: " + " + ".join(picked), True, COLOR_ACCENT
+        )
+        surface.blit(line, (left.x, left.bottom - 18))
 
     # правая колонка: найденные противоречия
     surface.blit(
@@ -138,7 +208,7 @@ def draw_testimony(game) -> None:
         y += 92
     hints = testimony.hints(case, state)
     if hints:
-        hint = f"Пар для проверки: {len(hints)} — откройте обе реплики в допросах"
+        hint = f"Непроверенных пар: {len(hints)} — обе реплики уже открыты"
         draw_text_wrapped(
             surface,
             hint,
@@ -167,17 +237,6 @@ def draw_testimony(game) -> None:
     game.testimony_rects["compare"] = compare.rect
     game.testimony_rects["reset"] = reset.rect
     game.testimony_rects["back"] = back.rect
-    if compare.clicked and game._click_once():
-        _compare(game)
-    elif reset.clicked and game._click_once():
-        game.testimony_selected = []
-        game.testimony_message = ""
-        pygame.time.wait(120)
-    elif back.clicked and game._click_once():
-        game.screen_name = getattr(game, "testimony_return", "board") or "board"
-        game.notebook_tab = "board"
-        game.testimony_selected = []
-        pygame.time.wait(120)
 
 
 def _toggle(game, key: str) -> None:
@@ -200,7 +259,9 @@ def _compare(game) -> None:
     if status == "ok":
         item = result.get("deduction") or {}
         game.testimony_message = f"Найдено: «{item.get('title', 'противоречие')}»"
-        game.add_notification(f"Противоречие: {item.get('title', '')} — +{result.get('reputation', 0)} репутации")
+        game.add_notification(
+            f"Противоречие: {item.get('title', '')} — +{result.get('reputation', 0)} к репутации"
+        )
         game.audio.play_sfx("success")
         game.testimony_selected = []
         save_game(game.state)
@@ -222,6 +283,12 @@ def _compare(game) -> None:
 def handle_testimony_click(game, pos) -> bool:
     """Клики по экрану (для тестов и событий)."""
     rects = getattr(game, "testimony_rects", {}) or {}
+    if rects.get("up") and rects["up"].collidepoint(pos):
+        scroll(game, -MAX_ROWS)
+        return True
+    if rects.get("down") and rects["down"].collidepoint(pos):
+        scroll(game, MAX_ROWS)
+        return True
     for key, rect in (rects.get("rows") or {}).items():
         if rect.collidepoint(pos):
             _toggle(game, key)
@@ -234,18 +301,34 @@ def handle_testimony_click(game, pos) -> bool:
         game.testimony_message = ""
         return True
     if rects.get("back") and rects["back"].collidepoint(pos):
-        game.screen_name = getattr(game, "testimony_return", "board") or "board"
+        game.screen_name = "notebook"
         game.notebook_tab = "board"
         game.testimony_selected = []
         return True
     return False
 
 
+def handle_testimony_scroll(game, steps: int) -> bool:
+    """Прокрутка колесом мыши (steps > 0 — вниз)."""
+    if scroll_limit(game) <= 0:
+        return False
+    scroll(game, int(steps))
+    return True
+
+
 def handle_testimony_key(game, event) -> bool:
+    if event.type == pygame.MOUSEWHEEL:
+        return handle_testimony_scroll(game, -SCROLL_WHEEL * int(event.y))
     if event.type != pygame.KEYDOWN:
         return False
+    if event.key in (pygame.K_DOWN, pygame.K_PAGEDOWN):
+        scroll(game, MAX_ROWS if event.key == pygame.K_PAGEDOWN else 1)
+        return True
+    if event.key in (pygame.K_UP, pygame.K_PAGEUP):
+        scroll(game, -MAX_ROWS if event.key == pygame.K_PAGEUP else -1)
+        return True
     if event.key == pygame.K_ESCAPE:
-        game.screen_name = getattr(game, "testimony_return", "board") or "board"
+        game.screen_name = "notebook"
         game.notebook_tab = "board"
         game.testimony_selected = []
         return True

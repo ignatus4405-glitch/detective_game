@@ -259,7 +259,8 @@ class Game:
         # сопоставление показаний
         self.testimony_selected = []
         self.testimony_message = ""
-        self.testimony_return = "board"
+        self.testimony_return = "notebook"
+        self.testimony_scroll = 0
         self.testimony_rects = {}
         # notebook tab
         self.notebook_tab = "clues"  # clues | suspects | board | notes
@@ -791,10 +792,10 @@ class Game:
             if self.search and getattr(self.search, "caught", False):
                 search_view.stop(
                     self,
-                    "Патруль заметил вас — обыск прерван. попытка стоила времени.",
+                    minutes=pressure.PATROL_CAUGHT_MINUTES,
                 )
             elif self.search and self.search.expired:
-                search_view.stop(self, "Время вышло — хозяин вернулся. попытка стоила 10 минут.")
+                search_view.stop(self)
         if self.screen_name == "dialogue" and self.dialogue_char and self.dialogue_timer > 0:
             try:
                 dt = self.clock.get_time() / 1000.0
@@ -897,6 +898,7 @@ class Game:
                 "Звонок: аноним подсказал, где искать. +1 репутация за наводку."
             )
             self.audio.play_sfx("success")
+        self.state.last_call_minute = int(self.state.case_time_minutes or 0)
         save_game(self.state)
 
     MOODS = {
@@ -1468,9 +1470,11 @@ class Game:
         self.state.trial_method = None
         self.state.deadline_missed = False
         self.state.calls_seen = 0
+        self.state.last_call_minute = 0
         self.state.silenced = {}
         self.testimony_selected = []
         self.testimony_message = ""
+        self.testimony_scroll = 0
         self.dialogue_timer = 0.0
         self.trial_rects = {}
         self.expertise_rects = {}
@@ -2666,6 +2670,19 @@ class Game:
                     (chip.x + 8, chip.y + 4),
                 )
             if chosen is None:
+                if dialogue.declined(self.state, ch["id"], index):
+                    # время вышло: варианты больше не принимаются — только «ДАЛЕЕ»
+                    closed = pygame.Rect(panel.x + 22, top + 118, panel.w - 44, 46)
+                    draw_panel(self.screen, closed, color=(34, 24, 26), border=COLOR_RED, radius=8)
+                    self.screen.blit(
+                        get_font(12, bold=True).render(
+                            "ТЕМА ЗАКРЫТА: вы промолчали. Нажмите «ДАЛЕЕ →».",
+                            True,
+                            COLOR_RED,
+                        ),
+                        (closed.x + 16, closed.y + 14),
+                    )
+                    return
                 hint = get_font(11, bold=True).render(
                     "ВЫБЕРИТЕ, ЧТО СКАЗАТЬ (клик или 1–3):", True, COLOR_ACCENT
                 )
@@ -2966,18 +2983,19 @@ class Game:
             r = pygame.Rect(rect.x + 20, y, rect.w - 40, row_h)
             if r.bottom > rect.bottom - 14:
                 break
-            col = (35, 35, 50) if collected else (25, 25, 30)
+            exposed_fake = clue["id"] in (self.state.fake_clues or set())
+            col = (35, 35, 50) if collected else ((38, 24, 26) if exposed_fake else (25, 25, 30))
             pygame.draw.rect(self.screen, col, r, border_radius=6)
             pygame.draw.rect(
                 self.screen,
-                COLOR_ACCENT if collected else COLOR_BORDER,
+                COLOR_ACCENT if collected else (COLOR_RED if exposed_fake else COLOR_BORDER),
                 r,
                 width=1,
                 border_radius=6,
             )
-            status_col = COLOR_GREEN if collected else COLOR_TEXT_DARK
+            status_col = COLOR_GREEN if collected else (COLOR_RED if exposed_fake else COLOR_TEXT_DARK)
             st = get_font(14 if compact else 16, bold=True).render(
-                "✓" if collected else "?", True, status_col
+                "✓" if collected else ("✗" if exposed_fake else "?"), True, status_col
             )
             self.screen.blit(st, (r.x + 12, r.y + (row_h - st.get_height()) // 2))
             name = get_font(12 if compact else 13, bold=True).render(
@@ -2987,10 +3005,22 @@ class Game:
             )
             self.screen.blit(name, (r.x + 40, r.y + 6))
             if not collected:
-                hint = get_font(10).render(
-                    "(найдите в локациях — ищите значок лупы)", True, COLOR_TEXT_DARK
-                )
-                self.screen.blit(hint, (r.x + 40, r.y + (26 if compact else 32)))
+                if exposed_fake:
+                    fake_title = get_font(12 if compact else 13, bold=True).render(
+                        f"{clue['title']} — ПОДБРОШЕНО", True, COLOR_RED
+                    )
+                    self.screen.blit(fake_title, (r.x + 40, r.y + 6))
+                    hint = get_font(10).render(
+                        "(экспертиза доказала подделку — улика изъята из блокнота)",
+                        True,
+                        COLOR_TEXT_DIM,
+                    )
+                    self.screen.blit(hint, (r.x + 40, r.y + (26 if compact else 32)))
+                else:
+                    hint = get_font(10).render(
+                        "(найдите в локациях — ищите значок лупы)", True, COLOR_TEXT_DARK
+                    )
+                    self.screen.blit(hint, (r.x + 40, r.y + (26 if compact else 32)))
                 y += step
                 continue
 
@@ -3171,10 +3201,13 @@ class Game:
         self.screen.blit(instr, (main.x + 20, main.y + 15))
         # сколько улик есть и сколько рекомендуется
         have = ending_logic.clue_count(self.state, self.current_case)
+        collected = len(self.state.collected_clues)
         need = ending_logic.required_clues(self.current_case)
         total_clues = len(self.current_case.get("clues", []))
         if have >= need:
             clue_line = f"Улик: {have} из {total_clues} — доказательств достаточно"
+            if collected > have:
+                clue_line += f" · собрано {collected}, но суд примет {have}"
             clue_col = COLOR_GREEN
         else:
             clue_line = (
@@ -3235,6 +3268,10 @@ class Game:
                 self.screen.blit(tag, (r.right - tag.get_width() - 60, r.bottom - 18))
             # кликабельность — один выбор на нажатие
             if r.collidepoint(mouse) and pressed and self._click_once():
+                if self.accusation_selected != sus["id"]:
+                    # ответы суда относятся к конкретному подозреваемому
+                    self.state.trial_motive = None
+                    self.state.trial_method = None
                 self.accusation_selected = sus["id"]
             # галочка
             if selected:
@@ -3375,10 +3412,15 @@ class Game:
         self.state.case_state = "finished"
         resolution = ending_logic.resolve(self.current_case, self.state)
         case_id = str(self.current_case.get("id", ""))
-        known = ending_logic.ending_key(case_id, resolution) in ending_logic.unlocked_for(
-            self.state, case_id
-        )
-        ending_logic.record(self.state, case_id, resolution)
+        # без обвинения (срок вышел) концовку в коллекцию не пишем:
+        # такого финала нет в списке дела, иначе счётчик «N из M» ломается
+        if self.state.accusation_result:
+            known = ending_logic.ending_key(case_id, resolution) in ending_logic.unlocked_for(
+                self.state, case_id
+            )
+            ending_logic.record(self.state, case_id, resolution)
+        else:
+            known = True
         if resolution.get("success"):
             self.state.completed_cases.add(case_id)
         self._ending_is_new = not known
@@ -3409,48 +3451,45 @@ class Game:
         result_text = "ДЕЛО РАСКРЫТО" if success else "ДЕЛО ПРОВАЛЕНО"
         res = get_font(26, bold=True).render(result_text, True, rank_col)
         self.screen.blit(res, res.get_rect(center=(panel.centerx, panel.y + 92)))
-        # метка концовки: какая именно из нескольких
+        # метка концовки и пометки суда: рисуем группой по центру,
+        # иначе при нескольких чипах ряд уезжает за панель
         chip_font = get_font(10, bold=True)
-        chip_text = chip_font.render(label.upper(), True, (240, 232, 208))
-        chip = pygame.Rect(0, 0, chip_text.get_width() + 22, 20)
-        chip.center = (panel.centerx, panel.y + 118)
-        pygame.draw.rect(self.screen, (34, 34, 44), chip, border_radius=10)
-        pygame.draw.rect(self.screen, rank_col, chip, width=1, border_radius=10)
-        self.screen.blit(chip_text, (chip.x + 11, chip.y + 4))
-        extra_x = chip.right + 8
+        chips = [(label.upper(), (240, 232, 208), (34, 34, 44), rank_col, 11)]
         if resolution.get("timeline_bonus"):
-            bonus = get_font(9, bold=True).render("ХРОНОЛОГИЯ ВОССТАНОВЛЕНА", True, COLOR_ACCENT)
-            bonus_rect = pygame.Rect(extra_x, chip.y, bonus.get_width() + 14, 20)
-            pygame.draw.rect(self.screen, (34, 30, 22), bonus_rect, border_radius=10)
-            pygame.draw.rect(self.screen, COLOR_ACCENT, bonus_rect, width=1, border_radius=10)
-            self.screen.blit(bonus, (bonus_rect.x + 7, bonus_rect.y + 4))
-            extra_x = bonus_rect.right + 6
+            chips.append(
+                ("ХРОНОЛОГИЯ ВОССТАНОВЛЕНА", COLOR_ACCENT, (34, 30, 22), COLOR_ACCENT, 7)
+            )
         trial_info = resolution.get("trial") or {}
-        if trial_info.get("asked"):
+        if trial_info.get("asked") and trial_info.get("answered"):
             if trial_info.get("score") == 2:
-                note_txt, note_col = "МОТИВ И СПОСОБ ДОКАЗАНЫ", COLOR_GREEN
+                note = ("МОТИВ И СПОСОБ ДОКАЗАНЫ", COLOR_GREEN, (26, 34, 28), COLOR_GREEN, 7)
             elif trial_info.get("score") == 0:
-                note_txt, note_col = "МОТИВ И СПОСОБ НЕ ДОКАЗАНЫ", COLOR_RED
+                note = ("МОТИВ И СПОСОБ НЕ ДОКАЗАНЫ", COLOR_RED, (34, 22, 24), COLOR_RED, 7)
             else:
-                note_txt, note_col = "СУД ПРИНЯЛ ЧАСТЬ ВЕРСИИ", COLOR_ACCENT
-            note = get_font(9, bold=True).render(note_txt, True, note_col)
-            note_rect = pygame.Rect(extra_x, chip.y, note.get_width() + 14, 20)
-            pygame.draw.rect(self.screen, (26, 30, 26), note_rect, border_radius=10)
-            pygame.draw.rect(self.screen, note_col, note_rect, width=1, border_radius=10)
-            self.screen.blit(note, (note_rect.x + 7, note_rect.y + 4))
-            extra_x = note_rect.right + 6
+                note = ("СУД ПРИНЯЛ ЧАСТЬ ВЕРСИИ", COLOR_ACCENT, (34, 30, 22), COLOR_ACCENT, 7)
+            chips.append(note)
         if resolution.get("late"):
-            late = get_font(9, bold=True).render("СРОК ВЫШЕЛ", True, COLOR_RED)
-            late_rect = pygame.Rect(extra_x, chip.y, late.get_width() + 14, 20)
-            pygame.draw.rect(self.screen, (36, 22, 22), late_rect, border_radius=10)
-            pygame.draw.rect(self.screen, COLOR_RED, late_rect, width=1, border_radius=10)
-            self.screen.blit(late, (late_rect.x + 7, late_rect.y + 4))
-            extra_x = late_rect.right + 6
+            chips.append(("СРОК ВЫШЕЛ", COLOR_RED, (36, 22, 22), COLOR_RED, 7))
         if getattr(self, "_ending_is_new", False):
-            new_rect = pygame.Rect(extra_x, chip.y, 62, 20)
-            pygame.draw.rect(self.screen, COLOR_ACCENT, new_rect, border_radius=10)
-            new_txt = get_font(9, bold=True).render("НОВАЯ", True, (12, 12, 12))
-            self.screen.blit(new_txt, new_txt.get_rect(center=new_rect.center))
+            chips.append(("НОВАЯ", (12, 12, 12), COLOR_ACCENT, COLOR_ACCENT, 9))
+        widths = [
+            get_font(9 if pad <= 9 else 10, bold=True).size(chip_label)[0] + pad * 2
+            for chip_label, _col, _bg, _border, pad in chips
+        ]
+        total_w = sum(widths) + 6 * (len(chips) - 1)
+        cx = panel.centerx - total_w // 2
+        chip_y = panel.y + 108
+        for (chip_label, chip_col, chip_bg, chip_border, pad), width in zip(
+            chips, widths, strict=True
+        ):
+            rect = pygame.Rect(cx, chip_y, width, 20)
+            pygame.draw.rect(self.screen, chip_bg, rect, border_radius=10)
+            pygame.draw.rect(self.screen, chip_border, rect, width=1, border_radius=10)
+            surf = get_font(9 if pad <= 9 else 10, bold=True).render(
+                chip_label, True, chip_col
+            )
+            self.screen.blit(surf, surf.get_rect(center=rect.center))
+            cx = rect.right + 6
         tit = get_font(18, bold=True).render(title, True, COLOR_TEXT)
         self.screen.blit(tit, tit.get_rect(center=(panel.centerx, panel.y + 146)))
         # текст финала

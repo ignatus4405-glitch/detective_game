@@ -483,7 +483,11 @@ def _merge_advanced_rules(cases: list) -> None:
                                 "слова, а судья снимает очки."
                             ),
                             "rank": "S+",
-                            "requires": {"all_deductions": True, "min_clues": 4},
+                            "requires": {
+                                "all_deductions": True,
+                                "min_clues": 4,
+                                "trial_correct": True,
+                            },
                         },
                     )
 
