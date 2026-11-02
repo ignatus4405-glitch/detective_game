@@ -928,7 +928,11 @@ def _safe_slug(value: str) -> str:
 
 def _version_in_dir(path: Path) -> Optional[str]:
     """Версия из VERSION рядом с exe или в _internal (onedir PyInstaller)."""
-    for candidate in (Path(path) / "VERSION", Path(path) / "_internal" / "VERSION"):
+    for candidate in (
+        Path(path) / "VERSION",
+        Path(path) / "_internal" / "VERSION",
+        Path(path) / "_internal" / "detective_game" / "VERSION",
+    ):
         try:
             if candidate.is_file():
                 raw = candidate.read_text(encoding="utf-8", errors="replace").strip().lstrip("vV")
@@ -998,8 +1002,19 @@ def stage_zip_update(
         if not (stage / EXE_NAME).exists():
             raise UpdateCheckError("в архиве нет DetectiveBlackville.exe")
         found = _version_in_dir(stage)
-        if found and version and found != str(version).lstrip("vV"):
+        wanted = str(version).strip().lstrip("vV") if version else ""
+        if found and wanted and found != wanted:
             raise UpdateCheckError(f"в архиве версия {found}, ожидалась {version}")
+        # get_version() читает корневой VERSION первым: если в архиве его нет,
+        # создаём сами — иначе после копирования остался бы старый файл и игра
+        # снова предложила бы то же обновление.
+        root_version = stage / "VERSION"
+        if wanted and not root_version.exists():
+            try:
+                root_version.write_text(wanted + "\n", encoding="utf-8")
+                log_update(f"в архиве нет корневого VERSION — создан со значением {wanted}")
+            except Exception as e:
+                log_update(f"не удалось создать VERSION в подготовленной папке: {e}")
         log_update(
             f"обновление подготовлено: {stage} (версия {found or 'не указана'}, "
             f"цель {target})"
@@ -1080,6 +1095,7 @@ set BLK_RC=%ERRORLEVEL%
 echo [blackville] xcopy exit code %BLK_RC% >> "%BLK_LOG%"
 rem get_version() reads the root VERSION first: keep it in sync with _internal,
 rem otherwise the stale file makes the game offer the very same update again.
+if exist "%BLK_TARGET%\_internal\detective_game\VERSION" if not exist "%BLK_TARGET%\VERSION" copy /y "%BLK_TARGET%\_internal\detective_game\VERSION" "%BLK_TARGET%\VERSION" >nul 2>&1
 if exist "%BLK_TARGET%\_internal\VERSION" copy /y "%BLK_TARGET%\_internal\VERSION" "%BLK_TARGET%\VERSION" >nul 2>&1
 if exist "%BLK_TARGET%\VERSION" type "%BLK_TARGET%\VERSION" >> "%BLK_LOG%"
 if exist "%BLK_TARGET%\_internal\VERSION" type "%BLK_TARGET%\_internal\VERSION" >> "%BLK_LOG%"

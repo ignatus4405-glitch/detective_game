@@ -1,3 +1,4 @@
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -728,3 +729,23 @@ def test_install_reports_setup_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(updater, "run_installer", lambda *a, **kw: False)
     assert checker.install() is False
     assert "установщик" in (checker.download_error or "").lower()
+
+
+def test_stage_creates_root_version_when_archive_has_none(tmp_path, monkeypatch):
+    """Корневой VERSION обязателен: без него игра снова предложит обновление."""
+    archive = tmp_path / "DetectiveBlackville-Windows.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("DetectiveBlackville/DetectiveBlackville.exe", b"MZ")
+        zf.writestr("DetectiveBlackville/_internal/VERSION", "0.1.28\n")
+    stage = updater.stage_zip_update(
+        archive, "0.1.28", target_dir=tmp_path / "game", work_dir=tmp_path / "temp"
+    )
+    assert (stage / "VERSION").read_text(encoding="utf-8").strip() == "0.1.28"
+
+
+def test_version_in_dir_reads_packaged_candidate(tmp_path):
+    """VERSION может лежать только в _internal/detective_game (package data)."""
+    packaged = tmp_path / "_internal" / "detective_game"
+    packaged.mkdir(parents=True)
+    (packaged / "VERSION").write_text("0.1.28\n", encoding="utf-8")
+    assert updater._version_in_dir(tmp_path) == "0.1.28"
