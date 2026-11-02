@@ -18,6 +18,7 @@ from . import (
     worldtime,
 )
 from . import endings as ending_logic
+from . import riddle as riddle_logic
 from . import search as search_logic
 from . import testimony as testimony_logic
 from .audio import audio
@@ -57,6 +58,7 @@ from .ui.layout import (
 )
 from .ui.location_art import location_art, type_label
 from .ui.puzzle_view import draw_puzzle_screen, handle_puzzle_click, handle_puzzle_key
+from .ui.riddle_view import draw_riddle, handle_riddle_click, handle_riddle_key
 from .ui.tutorial import TutorialState
 from .ui.tutorial_view import (
     draw_tutorial_screen,
@@ -215,6 +217,15 @@ class Game:
         self.puzzle_clue = None
         self.puzzle_rects = {}
         self._puzzle_started_at = 0.0
+        # кодовые замки (загадки)
+        self.riddle = None
+        self.riddle_clue = None
+        self.riddle_input = ""
+        self.riddle_hint = ""
+        self.riddle_message = ""
+        self.riddle_attempts = 0
+        self.riddle_rects = {}
+        self.location_clue_buttons = {}
         self.ending_rects = {}
         # звук и музыка
         self.audio = audio
@@ -609,6 +620,12 @@ class Game:
             elif event.type == pygame.KEYDOWN:
                 handle_puzzle_key(self, event)
             return
+        if self.screen_name == "riddle":
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                handle_riddle_click(self, self._to_logical(event.pos))
+            elif handle_riddle_key(self, event):
+                pass
+            return
         if self.screen_name == "cutscene":
             self.handle_cutscene_event(event)
             return
@@ -740,6 +757,7 @@ class Game:
                     self.screen_name = "location"
                     self.state.visited_locations.add(loc_id)
                     save_game(self.state)
+                    self._maybe_riddle_tip(loc_id)
         elif self.screen_name == "location":
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 if self.search:
@@ -751,6 +769,23 @@ class Game:
                     search_view.handle_click(self, event.pos)
                 elif search_view.handle_start_click(self, event.pos):
                     pass
+
+    def _maybe_riddle_tip(self, location_id):
+        """Один раз за сохранение объяснить, что «КОД» — это загадка."""
+        if getattr(self.state, "riddle_tip_shown", False):
+            return
+        clues = search_logic.visible_clues(self.current_case, location_id, self.state)
+        for clue in clues:
+            if clue["id"] in self.state.collected_clues:
+                continue
+            item = self.riddle_for(clue)
+            if item and not riddle_logic.solved(self.state, item):
+                self.state.riddle_tip_shown = True
+                self.add_notification(
+                    "Улика под загадкой: жмите «КОД», ответ выводится из текста"
+                )
+                save_game(self.state)
+                return
 
     def get_available_locations(self):
         if not self.current_case:
@@ -914,6 +949,7 @@ class Game:
         "notebook": "mystery",
         "accusation": "chase",
         "puzzle": "tension",
+        "riddle": "mystery",
         "timeline": "mystery",
         "tail": "chase",
         "route": "chase",
@@ -987,6 +1023,8 @@ class Game:
                 self.draw_cutscene()
             elif self.screen_name == "puzzle":
                 self.draw_puzzle()
+            elif self.screen_name == "riddle":
+                draw_riddle(self)
             elif self.screen_name == "timeline":
                 timeline_view.draw_timeline(self)
             elif self.screen_name == "testimony":
@@ -1612,11 +1650,35 @@ class Game:
         save_game(self.state)
         self.add_notification(f"Улика собрана: {clue['title']}")
 
+    def riddle_for(self, clue):
+        """Загадка-код на улике (или None, если замка нет)."""
+        return riddle_logic.spec(self.current_case, clue)
+
+    def open_riddle(self, clue):
+        """Открыть кодовый замок: код выводится из фактов дела."""
+        item = self.riddle_for(clue)
+        if not item or riddle_logic.solved(self.state, item):
+            self.open_puzzle(clue)
+            return
+        item = dict(item, clue_id=clue.get("id"))
+        self.riddle = item
+        self.riddle_clue = clue
+        self.riddle_input = ""
+        self.riddle_hint = ""
+        self.riddle_message = ""
+        self.riddle_attempts = 0
+        self.riddle_rects = {}
+        self.screen_name = "riddle"
+        self.audio.play_music("mystery")
+
     def open_puzzle(self, clue):
         """Открыть головоломку, которая охраняет улику."""
         spec = clue.get("puzzle")
         if not spec:
             self.collect_clue(clue)
+            if self.screen_name == "riddle":
+                # замок открыт, а головоломки нет — сразу обратно в локацию
+                self.screen_name = "location"
             return
         self.puzzle = puzzles.Puzzle(spec, seed=str(clue.get("id", "")))
         self.puzzle_clue = clue
@@ -2211,6 +2273,7 @@ class Game:
         clues_here = search_logic.visible_clues(self.current_case, loc["id"], self.state)
         chars_here = [ch for ch in self.current_case["characters"] if ch["location"] == loc["id"]]
         y = right.y
+        self.location_clue_buttons = {}
         # заголовок улик
         clue_header = get_font(14, bold=True).render("УЛИКИ В ЛОКАЦИИ", True, COLOR_TEXT)
         self.screen.blit(clue_header, (right.x, y))
@@ -2241,16 +2304,26 @@ class Game:
                     COLOR_TEXT_DIM,
                     pygame.Rect(rect.x + 35, rect.y + 30, rect.w - 155, 34),
                 )
-                # кнопка: с замком — «ВЗЛОМАТЬ», без — «ИЗУЧИТЬ»
+                # кнопка: код → «КОД», замок → «ВЗЛОМАТЬ», иначе «ИЗУЧИТЬ»
                 if not collected:
+                    riddle_item = self.riddle_for(clue)
+                    need_code = bool(riddle_item) and not riddle_logic.solved(
+                        self.state, riddle_item
+                    )
                     locked = bool(clue.get("puzzle"))
-                    label = "ВЗЛОМАТЬ" if locked else "ИЗУЧИТЬ"
+                    label = "КОД" if need_code else ("ВЗЛОМАТЬ" if locked else "ИЗУЧИТЬ")
                     btn = Button((rect.right - 100, rect.y + 12, 85, 28), label, accent=True)
                     btn.update(mouse, pressed)
                     btn.draw(self.screen, get_font(11, bold=True))
+                    self.location_clue_buttons[clue["id"]] = pygame.Rect(btn.rect)
+                    if need_code:
+                        mark = get_font(9, bold=True).render("ЗАГАДКА", True, (210, 170, 90))
+                        self.screen.blit(mark, (rect.right - 100, rect.y + 44))
                     if btn.clicked and self._click_once() and not self.search:
                         pygame.time.wait(120)
-                        if locked:
+                        if need_code:
+                            self.open_riddle(clue)
+                        elif locked:
                             self.open_puzzle(clue)
                         else:
                             self.collect_clue(clue)

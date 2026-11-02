@@ -216,9 +216,10 @@ def test_patrol_spot_shows_warning_not_search_hint(game, monkeypatch):
     game.screen_name = "location"
     session = search.Search(case, "warehouse", game.state)
     spot = session.spots[0]
-    col = 0 if spot["x"] < 0.5 else 1
-    row = 0 if spot["y"] < 0.5 else 1
-    session.elapsed = (row * 2 + col) * search.PATROL_CYCLE  # сектор над точкой
+    # ставим патруль ровно в сектор, где лежит точка
+    col = min(search.PATROL_COLS - 1, int(spot["x"] * search.PATROL_COLS))
+    row = min(search.PATROL_ROWS - 1, int(spot["y"] * search.PATROL_ROWS))
+    session.route_index = session.patrol_route.index((col, row))
     game.search = session
     game.draw()
     visual = game.search_rects["visual"]

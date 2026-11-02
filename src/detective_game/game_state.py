@@ -114,6 +114,10 @@ class GameState:
     fake_clues: set = field(default_factory=set)
     # выводы, полученные сопоставлением показаний
     deductions: set = field(default_factory=set)
+    # кодовые замки, которые уже открыты
+    riddles_solved: set = field(default_factory=set)
+    # подсказку про «КОД» показываем один раз за сохранение
+    riddle_tip_shown: bool = False
     # выбор игрока на суде: мотив и способ
     trial_motive: Optional[str] = None
     trial_method: Optional[str] = None
@@ -149,6 +153,8 @@ class GameState:
         d["confirmed_clues"] = list(self.confirmed_clues)
         d["fake_clues"] = list(self.fake_clues)
         d["deductions"] = list(self.deductions)
+        d["riddles_solved"] = list(self.riddles_solved)
+        d["riddle_tip_shown"] = bool(self.riddle_tip_shown)
         d["tail_failed"] = list(self.tail_failed)
         d["silenced"] = dict(self.silenced)
         # dataclass nested
@@ -193,6 +199,8 @@ class GameState:
             confirmed_clues=set(data.get("confirmed_clues", []) or []),
             fake_clues=set(data.get("fake_clues", []) or []),
             deductions=set(data.get("deductions", []) or []),
+            riddles_solved=set(data.get("riddles_solved", []) or []),
+            riddle_tip_shown=bool(data.get("riddle_tip_shown", False)),
             trial_motive=data.get("trial_motive"),
             trial_method=data.get("trial_method"),
             deadline_missed=bool(data.get("deadline_missed", False)),
