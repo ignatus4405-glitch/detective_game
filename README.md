@@ -127,9 +127,17 @@ GET https://api.github.com/repos/ignatus4405-glitch/detective_game/releases/late
 
 ```bash
 pip install pyinstaller
-pyinstaller --name DetectiveBlackville --onefile --windowed --add-data "src/detective_game/assets;assets" --add-data "src/detective_game/cases;cases" src/detective_game/main.py
-# exe появится в dist/
+python tools/generate_version_info.py   # вшивает BUILD_VERSION в пакет
+pyinstaller --name DetectiveBlackville --onedir --windowed \
+  --paths src --collect-all detective_game \
+  --add-data "VERSION;." --add-data "VERSION;detective_game" \
+  launcher.py
+# exe появится в dist/DetectiveBlackville/
 ```
+
+> `--add-data "VERSION;."` обязателен: без него собранная игра не найдёт версию
+> и будет считать себя `0.1.0` (вечный баннер обновления). CI это проверяет шагом
+> «Verify VERSION is bundled».
 
 Скрипт: `tools/build.ps1` / `tools/build.sh` (см. [docs/BUILD.md](docs/BUILD.md))
 

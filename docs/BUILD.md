@@ -77,6 +77,13 @@ pyinstaller --name DetectiveBlackville --onefile --windowed --clean --noconfirm 
   src/detective_game/main.py
 ```
 
+> **Важно для автообновления и версии:** перед сборкой запускайте
+> `python tools/generate_version_info.py`, добавьте `--add-data "VERSION;."`
+> (Windows) / `"VERSION:."` (Linux) и собирайте `--onedir` из `launcher.py`
+> (как в `.github/workflows/release.yml`). Без этого exe не найдёт версию и
+> будет всегда считать себя `0.1.0` — игра станет бесконечно предлагать
+> обновление.
+
 ### Проверка
 
 ```bash
