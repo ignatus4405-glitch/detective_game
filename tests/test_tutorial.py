@@ -421,3 +421,66 @@ def test_f1_opens_tutorial_from_menu():
     game.screen_name = "menu"
     game.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F1))
     assert game.screen_name == "tutorial"
+
+
+def test_notebook_map_tab_draws_city_map():
+    """Вкладка «Карта» в блокноте показывает карту, а не пустой прямоугольник."""
+    from detective_game.main import Game
+    from detective_game.ui import tutorial_view as tv
+
+    game = Game()
+    game.notifications.clear()
+    state = game.tutorial
+    state.goto(3)
+    state.tab = 2
+
+    layout = tutorial_layout(game.LOGICAL_W, game.LOGICAL_H, "notebook")
+    body = layout.notebook_body
+    top = body.y + 34
+    mini = pygame.Rect(body.x + 14, top, int(body.w * 0.55), body.bottom - top - 14)
+
+    calls = []
+    original = tv._image
+
+    def spy(name, size, dim=0.0):
+        calls.append((name, size))
+        return original(name, size, dim)
+
+    tv._image = spy
+    try:
+        tv.draw_tutorial_screen(game, state)
+    finally:
+        tv._image = original
+
+    assert any(name == "city_map.jpg" for name, _size in calls), "карта блокнота не рисуется"
+
+    # Внутри мини-карты должна быть картинка, а не однотонная заливка.
+    inner = mini.inflate(-16, -16)
+    colors = {
+        game.screen.get_at((x, y))[:3]
+        for x in range(inner.x, inner.right, 7)
+        for y in range(inner.y, inner.bottom, 7)
+    }
+    assert len(colors) > 30, f"мини-карта выглядит пустой: {len(colors)} цветов"
+
+
+def test_wrap_text_keeps_line_breaks():
+    """Переносы строк в подсказках не превращаются в квадратики."""
+    from detective_game.ui.widgets import get_font, wrap_text
+
+    text = "• Офис — начать дело\n• Дом мэра — первая улика\n• Парк — ошейник\n• Бар — свидетели"
+    lines = wrap_text(text, get_font(11), 300)
+    assert len(lines) == 4
+    assert all("\n" not in line for line in lines)
+    assert lines[0].startswith("• Офис")
+
+    # Обычный текст без переводов по-прежнему переносится по ширине.
+    wrapped = wrap_text("слово " * 30, get_font(11), 200)
+    assert len(wrapped) > 3
+
+
+def test_blit_rounded_handles_missing_image():
+    from detective_game.ui.tutorial_view import _blit_rounded
+
+    surface = pygame.Surface((40, 40))
+    assert _blit_rounded(surface, None, pygame.Rect(0, 0, 40, 40)) is False

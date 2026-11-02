@@ -280,23 +280,38 @@ def draw_panel(surface, rect, color=COLOR_PANEL, border=COLOR_BORDER, radius=8, 
     pygame.draw.rect(surface, color, rect, border_radius=radius)
     pygame.draw.rect(surface, border, rect, width=1, border_radius=radius)
 
-def draw_text_wrapped(surface, text, font, color, rect, line_spacing=2):
-    words = text.split(" ")
+def wrap_text(text, font, width: int):
+    """Разбивает текст на строки по ширине, уважая переводы строк ``\n``.
+
+    Раньше переносы просто попадали в слово, и шрифт рисовал вместо них
+    квадратики: многострочные подсказки («• Офис …\n• Дом мэра …») выглядели
+    как «• Офис — начать дело□• Дом мэра …».
+    """
     lines = []
-    cur = ""
-    for w in words:
-        test = cur + (" " if cur else "") + w
-        if font.size(test)[0] <= rect.w:
-            cur = test
-        else:
-            if cur:
-                lines.append(cur)
-            cur = w
-            while font.size(cur)[0] > rect.w:
-                lines.append(cur[:20])
-                cur = cur[20:]
-    if cur:
-        lines.append(cur)
+    for paragraph in str(text).split("\n"):
+        if not paragraph:
+            lines.append("")
+            continue
+        words = paragraph.split(" ")
+        cur = ""
+        for w in words:
+            test = cur + (" " if cur else "") + w
+            if font.size(test)[0] <= width:
+                cur = test
+            else:
+                if cur:
+                    lines.append(cur)
+                cur = w
+                while font.size(cur)[0] > width and len(cur) > 20:
+                    lines.append(cur[:20])
+                    cur = cur[20:]
+        if cur:
+            lines.append(cur)
+    return lines
+
+
+def draw_text_wrapped(surface, text, font, color, rect, line_spacing=2):
+    lines = wrap_text(text, font, rect.w)
     y = rect.y
     for line in lines:
         if y + font.get_height() > rect.y + rect.h:
