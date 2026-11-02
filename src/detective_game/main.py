@@ -43,6 +43,7 @@ from .ui.widgets import (
     draw_text_wrapped,
     get_font,
     render_text,
+    reset_font_caches,
     safe_text,
 )
 from .updater import (
@@ -143,6 +144,9 @@ class Game:
         pygame.display.set_caption(TITLE)
 
     def __init__(self):
+        # После pygame.quit()/init() в том же процессе старые Font-объекты
+        # недействительны — иначе отрисовка может упасть в segfault.
+        reset_font_caches()
         pygame.display.set_caption(TITLE)
         self.clock = pygame.time.Clock()
         self.running = True
@@ -212,6 +216,9 @@ class Game:
         self.update_dismissed = False
         # результат неудачной установки из прошлого запуска (показываем баннером)
         self.failed_update = None
+        # защёлка клика: кнопки баннеров создаются заново каждый кадр и без неё
+        # срабатывали на каждое удержание мыши (8 окон проводника за один клик)
+        self._click_latch = False
         # --- Новые виджеты настроек ---
         self._init_settings_widgets()
         # notifications queue
@@ -370,27 +377,35 @@ class Game:
         lines.append(f"Журнал: {get_app_log_path()}")
         return lines
 
-    def _install_update(self):
-        """Запускает установщик скачанного обновления и выходит из игры.
+    def _click_once(self) -> bool:
+        """True только в первый кадр нажатия — одно нажатие = одно действие.
 
-        Если текущая папка игры недоступна на запись (Program Files), установка
-        идёт через видимый мастер с запросом UAC — иначе Windows молча
-        отказывает в записи и «игра не обновляется».
+        Кнопки на баннерах обновления создаются внутри ``draw()`` заново каждый
+        кадр, поэтому у них ``self.pressed`` всегда ``False``: ``clicked``
+        остаётся ``True``, пока кнопка мыши удерживается. Без защёлки действие
+        повторялось каждый кадр — именно так одно нажатие «Установить»
+        открывало 8 окон проводника.
+        """
+        if not pygame.mouse.get_pressed()[0]:
+            self._click_latch = False
+            return False
+        if self._click_latch:
+            return False
+        self._click_latch = True
+        return True
+
+    def _install_update(self):
+        """Ставит скачанное обновление и выходит из игры.
+
+        Архив (обычный путь с 0.1.28) распаковывается и копируется скрытым
+        помощником после выхода игры; exe-установщик остаётся для защищённых
+        папок вроде Program Files, где нужен UAC. Раньше архив просто открывался
+        в проводнике с надписью «распакуйте вручную» — из-за этого обновление
+        «не копировалось само».
         """
         path = getattr(self.update_checker, "downloaded_path", None)
         if not path or not getattr(path, "exists", lambda: False)():
             self.add_notification("Файл обновления не найден — скачайте его заново")
-            return False
-        if str(path).lower().endswith(".zip"):
-            try:
-                from .updater import open_download_folder
-
-                open_download_folder(path)
-            except Exception:
-                pass
-            self.add_notification(
-                "Обновление скачано архивом — закройте игру и распакуйте его вручную"
-            )
             return False
         try:
             if install_requires_elevation():
@@ -406,7 +421,7 @@ class Game:
             reason = getattr(self.update_checker, "download_error", None)
             self.add_notification(
                 reason
-                or "Не удалось запустить установщик — откройте папку загрузок кнопкой «Папка»"
+                or "Не удалось запустить обновление — подробности в журнале обновлений"
             )
         except Exception as e:
             self.add_notification(f"Ошибка установки: {e}")
@@ -588,6 +603,8 @@ class Game:
         return avail
 
     def update(self, mouse_pos, mouse_pressed):
+        if not mouse_pressed:
+            self._click_latch = False
         # обновление времени
         if self.state.case_state == "in_progress":
             self.state.total_playtime += 1 / FPS
@@ -2103,12 +2120,12 @@ class Game:
                 )
                 btn_install.update(mouse, pressed)
                 btn_install.draw(self.screen, get_font(8, bold=True))
-                if btn_install.clicked:
+                if btn_install.clicked and self._click_once():
                     self._install_update()
                 btn_folder = Button((upd_rect.x + 160, upd_rect.y + 58, 80, 26), "Папка")
                 btn_folder.update(mouse, pressed)
                 btn_folder.draw(self.screen, get_font(8, bold=True))
-                if btn_folder.clicked:
+                if btn_folder.clicked and self._click_once():
                     try:
                         from .updater import open_download_folder
                         open_download_folder(checker.downloaded_path)
@@ -2120,13 +2137,13 @@ class Game:
                 )
                 btn_dl.update(mouse, pressed)
                 btn_dl.draw(self.screen, get_font(9, bold=True))
-                if btn_dl.clicked:
+                if btn_dl.clicked and self._click_once():
                     checker.start_download()
                     self.add_notification("Загрузка началась...")
                 btn_later = Button((upd_rect.x + 142, upd_rect.y + 46, 90, 28), "Позже")
                 btn_later.update(mouse, pressed)
                 btn_later.draw(self.screen, get_font(9, bold=True))
-                if btn_later.clicked:
+                if btn_later.clicked and self._click_once():
                     self.update_dismissed = True
             # Ошибка загрузки
             if getattr(checker, "download_error", None):
@@ -2152,7 +2169,7 @@ class Game:
             )
             btn_retry.update(mouse, pressed)
             btn_retry.draw(self.screen, get_font(8, bold=True))
-            if btn_retry.clicked:
+            if btn_retry.clicked and self._click_once():
                 self._retry_update_check()
             btn_log_txt = get_font(8).render("открыть журнал", True, COLOR_ACCENT)
             log_rect = btn_log_txt.get_rect(topleft=(err_rect.x + 172, err_rect.y + 66))
@@ -2176,7 +2193,7 @@ class Game:
             btn_retry = Button((err_rect.x + 10, err_rect.y + 56, 120, 26), "ЕЩЁ РАЗ")
             btn_retry.update(mouse, pressed)
             btn_retry.draw(self.screen, get_font(8, bold=True))
-            if btn_retry.clicked:
+            if btn_retry.clicked and self._click_once():
                 checker.download_error = None
                 checker.start_download()
             btn_log_txt = get_font(8).render("открыть журнал", True, COLOR_ACCENT)
@@ -2291,12 +2308,12 @@ class Game:
             btn_log = Button((rect.right - 300, rect.y + 22, 110, 30), "ЖУРНАЛ")
             btn_log.update(mouse, pressed)
             btn_log.draw(self.screen, get_font(8, bold=True))
-            if btn_log.clicked:
+            if btn_log.clicked and self._click_once():
                 open_app_log()
             btn_manual = Button((rect.right - 182, rect.y + 22, 130, 30), "СКАЧАТЬ ВРУЧНУЮ")
             btn_manual.update(mouse, pressed)
             btn_manual.draw(self.screen, get_font(8, bold=True))
-            if btn_manual.clicked:
+            if btn_manual.clicked and self._click_once():
                 try:
                     import webbrowser
 
@@ -2332,13 +2349,13 @@ class Game:
             btn_retry = Button((rect.right - 290, rect.y + 15, 130, 30), "ПОВТОРИТЬ", style="success")
             btn_retry.update(mouse, pressed)
             btn_retry.draw(self.screen, get_font(8, bold=True))
-            if btn_retry.clicked:
+            if btn_retry.clicked and self._click_once():
                 self._retry_update_check()
                 return
             btn_log = Button((rect.right - 150, rect.y + 15, 90, 30), "Журнал")
             btn_log.update(mouse, pressed)
             btn_log.draw(self.screen, get_font(8, bold=True))
-            if btn_log.clicked:
+            if btn_log.clicked and self._click_once():
                 open_app_log()
             close_rect = pygame.Rect(rect.right - 50, rect.y + 15, 30, 30)
             pygame.draw.rect(self.screen, (90, 45, 50), close_rect, border_radius=4)
@@ -2370,7 +2387,7 @@ class Game:
                 btn_inst = Button((rect.right - 220, rect.y + 12, 150, 32), "▶ УСТАНОВИТЬ", style="success")
                 btn_inst.update(mouse, pressed)
                 btn_inst.draw(self.screen, get_font(9, bold=True))
-                if btn_inst.clicked:
+                if btn_inst.clicked and self._click_once():
                     self._install_update()
                 close_rect = pygame.Rect(rect.right - 30, rect.y + 10, 20, 20)
                 pygame.draw.rect(self.screen, (40, 70, 110), close_rect, border_radius=4)
@@ -2414,12 +2431,12 @@ class Game:
             btn_install = Button((rect.right - 220, rect.y + 12, 150, 26), "▶ УСТАНОВИТЬ", style="success")
             btn_install.update(mouse, pressed)
             btn_install.draw(self.screen, get_font(9, bold=True))
-            if btn_install.clicked:
+            if btn_install.clicked and self._click_once():
                 self._install_update()
             btn_open = Button((rect.right - 60, rect.y + 12, 40, 26), "Папка")
             btn_open.update(mouse, pressed)
             btn_open.draw(self.screen, get_font(8, bold=True))
-            if btn_open.clicked:
+            if btn_open.clicked and self._click_once():
                 try:
                     from .updater import open_download_folder
                     open_download_folder(checker.downloaded_path)
@@ -2430,7 +2447,7 @@ class Game:
             btn_dl = Button((rect.right - 220, rect.y + 12, 110, 26), "⬇ Скачать", style="success")
             btn_dl.update(mouse, pressed)
             btn_dl.draw(self.screen, get_font(9, bold=True))
-            if btn_dl.clicked:
+            if btn_dl.clicked and self._click_once():
                 checker.start_download()
                 self.add_notification("Загрузка обновления...")
             btn_open = Button((rect.right - 100, rect.y + 12, 80, 26), "Открыть")

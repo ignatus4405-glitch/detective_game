@@ -605,6 +605,7 @@ def test_apply_helper_copies_files_and_relaunches(tmp_path, monkeypatch):
     (stage / "DetectiveBlackville.exe").write_bytes(b"MZ")
     target = tmp_path / "game"
     target.mkdir()
+    (target / "DetectiveBlackville.exe").write_bytes(b"MZ old")
 
     monkeypatch.setattr(updater.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(updater, "get_update_log_path", lambda: tmp_path / "inst.log")
@@ -749,3 +750,136 @@ def test_version_in_dir_reads_packaged_candidate(tmp_path):
     packaged.mkdir(parents=True)
     (packaged / "VERSION").write_text("0.1.28\n", encoding="utf-8")
     assert updater._version_in_dir(tmp_path) == "0.1.28"
+
+
+def test_run_installer_does_not_open_explorer_for_zip(tmp_path, monkeypatch):
+    """Регрессия: одно нажатие «Установить» открывало проводник по разу за кадр."""
+    archive = tmp_path / "DetectiveBlackville-Windows.zip"
+    archive.write_bytes(b"PK")
+    calls = []
+    monkeypatch.setattr(updater, "open_download_folder", lambda p: calls.append(p))
+
+    assert updater.run_installer(archive) is False
+    assert calls == []
+
+
+def test_install_update_stages_zip_instead_of_manual_unpack(tmp_path, monkeypatch):
+    """Кнопка «Установить» должна ставить архив, а не просить распаковать вручную."""
+    import os
+
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    import pygame
+
+    pygame.init()
+    pygame.display.set_mode((1280, 720))
+    from detective_game import main as game_main
+
+    archive = tmp_path / "DetectiveBlackville-Windows.zip"
+    archive.write_bytes(b"PK")
+
+    class Checker:
+        downloaded_path = archive
+        download_error = None
+
+        def __init__(self):
+            self.installed = 0
+
+        def install(self, silent=None):
+            self.installed += 1
+            return True
+
+    game = game_main.Game.__new__(game_main.Game)
+    game.notifications = []
+    game.update_checker = Checker()
+    monkeypatch.setattr(game_main, "install_requires_elevation", lambda: False)
+    monkeypatch.setattr(game_main, "pygame", pygame)
+    opened = []
+    monkeypatch.setattr(updater, "open_download_folder", lambda p: opened.append(p))
+
+    with pytest.raises(SystemExit):
+        game._install_update()
+
+    assert game.update_checker.installed == 1
+    assert opened == [], "архив должен ставиться сам, а не открываться в проводнике"
+
+
+def test_click_once_fires_until_mouse_released():
+    """Защёлка клика: удержание мыши — одно действие, а не по действию на кадр."""
+    import os
+
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    import pygame
+
+    pygame.init()
+    pygame.display.set_mode((320, 200))
+    from detective_game import main as game_main
+
+    game = game_main.Game.__new__(game_main.Game)
+    game._click_latch = False
+    pressed = {"value": True}
+    monkeypatch_target = pygame.mouse
+    original = monkeypatch_target.get_pressed
+    try:
+        pygame.mouse.get_pressed = lambda *a, **kw: (pressed["value"], False, False)
+        assert game._click_once() is True   # первый кадр нажатия
+        assert game._click_once() is False  # кнопка всё ещё удерживается
+        assert game._click_once() is False
+        pressed["value"] = False
+        assert game._click_once() is False  # отпустили — защёлка сброшена
+        assert game._click_latch is False
+        pressed["value"] = True
+        assert game._click_once() is True   # новое нажатие снова работает
+    finally:
+        pygame.mouse.get_pressed = original
+
+
+def test_staged_update_refuses_folder_without_game(tmp_path, monkeypatch):
+    """Не копируем файлы в папку, где нет exe игры (защита от «обновилось в никуда»)."""
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "DetectiveBlackville.exe").write_bytes(b"MZ")
+    target = tmp_path / "not_a_game"
+    target.mkdir()
+    monkeypatch.setattr(updater, "get_install_dir", lambda: target)
+    monkeypatch.setattr(updater, "is_dir_writable", lambda p: True)
+    monkeypatch.setattr(updater, "get_app_log_path", lambda: tmp_path / "update.log")
+
+    assert updater.run_staged_update(stage, version="0.1.28") is False
+
+
+def test_update_banner_click_does_not_repeat_every_frame(tmp_path, monkeypatch):
+    """Регрессия «8 окон проводника»: одно нажатие = одно действие.
+
+    Кнопки баннера создаются в draw() заново каждый кадр, поэтому при
+    удержании мыши clicked=True всё время. Проверяем, что установка
+    запускается ровно один раз за нажатие.
+    """
+    import os
+
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    import pygame
+
+    pygame.init()
+    pygame.display.set_mode((1280, 720))
+    from detective_game import main as game_main
+
+    game = game_main.Game()
+    game.notifications.clear()
+    game.screen_name = "menu"
+    game.update_dismissed = False
+    archive = tmp_path / "DetectiveBlackville-Windows.zip"
+    archive.write_bytes(b"PK")
+    game.update_checker.downloaded_path = archive
+    game.update_checker.downloading = False
+    game.update_checker.done = False
+    game.update_checker.result = None
+
+    calls = []
+    monkeypatch.setattr(game_main.Game, "_install_update", lambda self: calls.append(1) or False)
+    monkeypatch.setattr(pygame.mouse, "get_pressed", lambda *a, **kw: (True, False, False))
+    monkeypatch.setattr(pygame.mouse, "get_pos", lambda: (850, 35))
+
+    for _ in range(8):  # восемь кадров с зажатой кнопкой мыши
+        game.draw()
+
+    assert len(calls) == 1, f"установка запускалась {len(calls)} раз за одно нажатие"

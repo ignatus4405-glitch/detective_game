@@ -1142,6 +1142,10 @@ def run_staged_update(
     if target is None:
         log_update("обновление файлов: не удалось определить папку игры")
         return False
+    if not (target / EXE_NAME).exists():
+        # Защита от копирования «в никуда»: цель обязана быть папкой игры.
+        log_update(f"обновление файлов: в {target} нет {EXE_NAME} — это не папка игры")
+        return False
     if not is_dir_writable(target):
         log_update(f"обновление файлов: папка {target} недоступна на запись")
         return False
@@ -1222,8 +1226,10 @@ def run_installer(
             return False
 
         if p.suffix.lower() != ".exe":
-            # .zip и прочее — инсталлятор не запускаем, только показываем файл
-            open_download_folder(p)
+            # Архивы ставит stage_zip_update()/run_staged_update(); сюда попадать
+            # не должны. Проводник отсюда больше не открываем: раньше это давало
+            # по окну на кадр, пока держится кнопка мыши.
+            log_update(f"run_installer: {p.name} — не установщик, нужен архивный путь")
             return False
 
         target = install_dir if install_dir is not None else get_install_dir()
