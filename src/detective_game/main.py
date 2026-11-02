@@ -7,7 +7,7 @@ import pygame
 
 from . import get_version_source
 from .config import *
-from .data import get_clue, get_location, list_cases, load_case
+from .data import case_map, get_clue, get_location, list_cases, load_case
 from .game_state import AVATARS, BACKGROUNDS, DetectiveProfile, GameState
 from .save_system import (
     delete_save,
@@ -20,12 +20,16 @@ from .save_system import (
     save_game,
     save_settings,
 )
+from .ui.artwork import blit_rounded as blit_rounded_image
+from .ui.artwork import clear_cache as clear_artwork_cache
+from .ui.artwork import cover_image
 from .ui.layout import (
     case_select_layout,
     customization_layout,
     map_layout,
     settings_layout,
 )
+from .ui.location_art import location_art, type_label
 from .ui.tutorial import TutorialState
 from .ui.tutorial_view import (
     draw_tutorial_screen,
@@ -147,6 +151,7 @@ class Game:
         # После pygame.quit()/init() в том же процессе старые Font-объекты
         # недействительны — иначе отрисовка может упасть в segfault.
         reset_font_caches()
+        clear_artwork_cache()
         pygame.display.set_caption(TITLE)
         self.clock = pygame.time.Clock()
         self.running = True
@@ -672,6 +677,10 @@ class Game:
 
     def draw_city_background(self):
         W, H = self.screen.get_size()
+        # фон — кабинет детектива; если картинки нет, остаётся сетка города
+        bg = cover_image("locations/hub.jpg", (W, H), dim=0.66)
+        if bg:
+            self.screen.blit(bg, (0, 0))
         for x in range(0, W, 80):
             pygame.draw.line(self.screen, (22, 22, 30), (x, 0), (x, H), 1)
         for y in range(0, H, 80):
@@ -988,23 +997,36 @@ class Game:
             card = layout.cards[idx]
             rect = card.rect
             draw_panel(self.screen, rect)
-            # постер-заглушка
+            # постер дела: карта города, если она есть у дела
             poster = card.poster
-            for i in range(poster.h):
-                col = (30 + i // 3, 30 + i // 4, 40 + i // 5)
-                pygame.draw.line(
-                    self.screen, col, (poster.x, poster.y + i), (poster.right, poster.y + i)
+            poster_art = cover_image(
+                case_map(case), (poster.w, poster.h), dim=0.45, tint=None
+            ) if case_map(case) else None
+            if blit_rounded_image(self.screen, poster_art, poster, radius=8):
+                # затемнение под заголовок дела и значок «расследование»
+                band = pygame.Surface((poster.w, 44), pygame.SRCALPHA)
+                for row in range(44):
+                    alpha = int(200 * (row / 43) ** 1.5)
+                    pygame.draw.line(band, (6, 8, 14, alpha), (0, row), (poster.w, row))
+                self.screen.blit(band, (poster.x, poster.bottom - 44))
+                badge = get_font(10, bold=True).render("ДЕЛО", True, (230, 214, 160))
+                self.screen.blit(badge, (poster.x + 10, poster.bottom - 26))
+            else:
+                for i in range(poster.h):
+                    col = (30 + i // 3, 30 + i // 4, 40 + i // 5)
+                    pygame.draw.line(
+                        self.screen, col, (poster.x, poster.y + i), (poster.right, poster.y + i)
+                    )
+                # иконка-бейдж дела (эмодзи нет в бандл-шрифте — рисуем букву в кольце)
+                draw_icon(
+                    self.screen,
+                    "",
+                    poster.center,
+                    max(48, min(poster.w, poster.h) // 2),
+                    color=COLOR_ACCENT,
+                    fallback=(case["title"][:1] or "?"),
                 )
             pygame.draw.rect(self.screen, COLOR_BORDER, poster, width=1, border_radius=8)
-            # иконка-бейдж дела (эмодзи нет в бандл-шрифте — рисуем букву в кольце)
-            draw_icon(
-                self.screen,
-                "",
-                poster.center,
-                max(48, min(poster.w, poster.h) // 2),
-                color=COLOR_ACCENT,
-                fallback=(case["title"][:1] or "?"),
-            )
             # заголовок и подзаголовок
             title_surf = get_font(18, bold=True).render(case["title"], True, COLOR_TEXT)
             self.screen.blit(title_surf, card.title_pos)
@@ -1084,6 +1106,46 @@ class Game:
             world=(WINDOW_WIDTH, WINDOW_HEIGHT),
         )
 
+    def _draw_case_map(self, rect: pygame.Rect) -> None:
+        """Фон карты дела: картинка города + подписи районов + вуаль под пины."""
+        draw_panel(self.screen, rect)
+        art = cover_image(case_map(self.current_case), (rect.w, rect.h), dim=0.5)
+        if blit_rounded_image(self.screen, art, rect, radius=8):
+            veil = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+            veil.fill((8, 10, 18, 80))
+            self.screen.blit(veil, rect.topleft)
+            # нижняя «шторка»: подсказка внизу карты должна читаться
+            band_h = max(48, int(rect.h * 0.1))
+            band = pygame.Surface((rect.w, band_h), pygame.SRCALPHA)
+            for row in range(band_h):
+                alpha = int(225 * (row / max(1, band_h - 1)) ** 1.5)
+                pygame.draw.line(band, (8, 10, 18, alpha), (0, row), (rect.w, row))
+            self.screen.blit(band, (rect.x, rect.bottom - band_h))
+        else:
+            # запасной вариант, если картинки нет: прежняя тёмная сетка
+            pygame.draw.rect(self.screen, (18, 18, 26), rect, border_radius=8)
+            for x in range(rect.x, rect.right, 80):
+                pygame.draw.line(self.screen, (40, 40, 50), (x, rect.y), (x, rect.bottom), 1)
+            for y in range(rect.y, rect.bottom, 80):
+                pygame.draw.line(self.screen, (40, 40, 50), (rect.x, y), (rect.right, y), 1)
+
+        # районы города: подпись на плашке, чтобы читалась на любой карте
+        font_dist = get_font(10, bold=True)
+        for name, nx, ny in (
+            ("ХОЛМЫ", 0.03, 0.04),
+            ("СЕВЕР", 0.55, 0.04),
+            ("ЗАПАД", 0.03, 0.52),
+            ("ЦЕНТР", 0.46, 0.30),
+            ("ПОРТ", 0.72, 0.62),
+        ):
+            label = font_dist.render(name, True, (214, 206, 186))
+            badge = pygame.Surface((label.get_width() + 12, label.get_height() + 4), pygame.SRCALPHA)
+            pygame.draw.rect(badge, (10, 12, 20, 165), badge.get_rect(), border_radius=3)
+            pos = (rect.x + int(nx * rect.w), rect.y + int(ny * rect.h))
+            self.screen.blit(badge, pos)
+            self.screen.blit(label, (pos[0] + 6, pos[1] + 2))
+        pygame.draw.rect(self.screen, COLOR_BORDER, rect, width=1, border_radius=8)
+
     def draw_map(self):
         if not self.current_case:
             return
@@ -1129,34 +1191,8 @@ class Game:
                 elif action == "accuse" and can_accuse:
                     self.screen_name = "accusation"
 
-        # карта
-        draw_panel(self.screen, layout.map_rect)
-        city_surf = pygame.Surface((layout.map_rect.w, layout.map_rect.h))
-        city_surf.fill((18, 18, 26))
-        districts = [
-            {"name": "ЦЕНТР", "x": 0.35, "y": 0.3, "w": 0.3, "h": 0.3},
-            {"name": "ПОРТ", "x": 0.7, "y": 0.5, "w": 0.3, "h": 0.5},
-            {"name": "ЗАПАД", "x": 0, "y": 0.5, "w": 0.35, "h": 0.5},
-            {"name": "СЕВЕР", "x": 0, "y": 0, "w": 0.5, "h": 0.3},
-            {"name": "ХОЛМЫ", "x": 0, "y": 0, "w": 0.3, "h": 0.35},
-        ]
-        for d in districts:
-            r = pygame.Rect(
-                int(d["x"] * layout.map_rect.w),
-                int(d["y"] * layout.map_rect.h),
-                int(d["w"] * layout.map_rect.w),
-                int(d["h"] * layout.map_rect.h),
-            )
-            pygame.draw.rect(city_surf, (28, 28, 38), r, border_radius=8)
-            pygame.draw.rect(city_surf, (50, 50, 60), r, width=1, border_radius=8)
-            font_dist = get_font(10, bold=True)
-            txt = font_dist.render(d["name"], True, (80, 80, 90))
-            city_surf.blit(txt, (r.x + 8, r.y + 6))
-        for x in range(0, layout.map_rect.w, 80):
-            pygame.draw.line(city_surf, (40, 40, 50), (x, 0), (x, layout.map_rect.h), 1)
-        for y in range(0, layout.map_rect.h, 80):
-            pygame.draw.line(city_surf, (40, 40, 50), (0, y), (layout.map_rect.w, y), 1)
-        self.screen.blit(city_surf, layout.map_rect.topleft)
+        # карта дела — художественная карта-картинка (assets/images/maps/…)
+        self._draw_case_map(layout.map_rect)
 
         # локации: позиции берём из макета — те же, по которым ловим клики
         avail = self.get_available_locations()
@@ -1264,12 +1300,17 @@ class Game:
         draw_panel(self.screen, header)
         title = font_title.render(loc["name"].upper(), True, COLOR_ACCENT)
         self.screen.blit(title, (header.x + 20, header.y + 12))
-        type_txt = get_font(11).render(
-            loc["type"].upper() + " • " + loc["district"], True, COLOR_TEXT_DIM
-        )
-        self.screen.blit(type_txt, (header.right - 200, header.y + 20))
         btn_back = Button((header.right - 220, header.y + 10, 100, 30), "← КАРТА")
         btn_notes = Button((header.right - 110, header.y + 10, 90, 30), "БЛОКНОТ")
+        # подпись типа и района — слева от кнопок и с обрезкой по доступной ширине
+        type_text = type_label(loc) + " • " + loc["district"]
+        type_font = get_font(11)
+        avail = header.right - 230 - (header.x + 30)
+        while type_text and type_font.size(type_text)[0] > avail:
+            type_text = type_text[:-1]
+        if type_text:
+            type_txt = type_font.render(type_text.rstrip(" •"), True, COLOR_TEXT_DIM)
+            self.screen.blit(type_txt, (header.right - 240 - type_txt.get_width(), header.y + 20))
         mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
         for btn, act in [(btn_back, "map"), (btn_notes, "notebook")]:
@@ -1283,24 +1324,24 @@ class Game:
         draw_panel(self.screen, main_rect)
         # слева — визуал локации
         visual = pygame.Rect(main_rect.x + 15, main_rect.y + 15, 500, 300)
-        # градиент локации по типу
-        type_cols = {
-            "police": (30, 50, 80),
-            "crime": (60, 30, 30),
-            "bar": (60, 40, 20),
-            "apartment": (40, 50, 40),
-            "bank": (60, 60, 30),
-            "vault": (40, 40, 50),
-            "public": (40, 50, 60),
-            "hub": (50, 50, 30),
-            "warehouse": (40, 40, 40),
-        }
-        base_col = type_cols.get(loc["type"], (30, 30, 40))
-        for i in range(visual.h):
-            col = tuple(min(255, c + i // 8) for c in base_col)
-            pygame.draw.line(
-                self.screen, col, (visual.x, visual.y + i), (visual.right, visual.y + i)
-            )
+        # иллюстрация локации (по типу), с «погодой»-вуалью для разных мест
+        art_name, art_tint = location_art(loc)
+        art = cover_image(art_name or "", (visual.w, visual.h), dim=0.18, tint=art_tint) if art_name else None
+        if blit_rounded_image(self.screen, art, visual, radius=8):
+            # нижняя шторка, чтобы подписи поверх картинки читались
+            band_h = 46
+            band = pygame.Surface((visual.w, band_h), pygame.SRCALPHA)
+            for row in range(band_h):
+                alpha = int(210 * (row / max(1, band_h - 1)) ** 1.4)
+                pygame.draw.line(band, (6, 8, 14, alpha), (0, row), (visual.w, row))
+            self.screen.blit(band, (visual.x, visual.bottom - band_h))
+        else:
+            base_col = (30, 30, 40)
+            for i in range(visual.h):
+                col = tuple(min(255, c + i // 8) for c in base_col)
+                pygame.draw.line(
+                    self.screen, col, (visual.x, visual.y + i), (visual.right, visual.y + i)
+                )
         pygame.draw.rect(self.screen, COLOR_BORDER, visual, width=1, border_radius=8)
         # иконка
         icon_map = {
@@ -1321,11 +1362,16 @@ class Game:
         draw_icon(
             self.screen,
             icon,
-            visual.center,
-            96,
-            color=(200, 200, 210),
+            (visual.x + 46, visual.bottom - 42),
+            34 if art else 96,
+            color=(230, 226, 210),
             fallback=(loc["name"][:1] or "?"),
         )
+        if art:
+            label, district = type_label(loc), loc["district"].upper()
+            caption_text = label if label == district else f"{label} • {district}"
+            caption = get_font(10).render(caption_text, True, (200, 196, 180))
+            self.screen.blit(caption, (visual.x + 70, visual.bottom - 48))
         # описание
         desc_rect = pygame.Rect(main_rect.x + 15, visual.bottom + 15, 500, 100)
         draw_panel(self.screen, desc_rect, color=(22, 22, 30))
@@ -1365,14 +1411,14 @@ class Game:
                     clue["title"], True, COLOR_TEXT if not collected else COLOR_TEXT_DIM
                 )
                 self.screen.blit(title, (rect.x + 35, rect.y + 10))
-                # описание обрезанное
-                desc = clue["desc"][:90] + "..." if len(clue["desc"]) > 90 else clue["desc"]
+                # описание обрезанное; справа оставляем место под кнопку «ИЗУЧИТЬ»
+                desc = clue["desc"][:110] + "..." if len(clue["desc"]) > 110 else clue["desc"]
                 draw_text_wrapped(
                     self.screen,
                     desc,
                     get_font(11),
                     COLOR_TEXT_DIM,
-                    pygame.Rect(rect.x + 35, rect.y + 30, rect.w - 50, 30),
+                    pygame.Rect(rect.x + 35, rect.y + 30, rect.w - 155, 34),
                 )
                 # кнопка собрать
                 if not collected:
@@ -1444,20 +1490,40 @@ class Game:
             return
         ch = self.dialogue_char
         font_btn = get_font(13, bold=True)
+        # фон — иллюстрация места, где идёт разговор (сильно затемнённая)
+        loc = get_location(self.current_case, ch.get("location", "")) if self.current_case else None
+        if loc:
+            art_name, art_tint = location_art(loc)
+            backdrop = (
+                cover_image(art_name, (WINDOW_WIDTH, WINDOW_HEIGHT), dim=0.62, tint=art_tint)
+                if art_name
+                else None
+            )
+            if backdrop:
+                self.screen.blit(backdrop, (0, 0))
         # затемнение
         overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 180))
+        overlay.fill((0, 0, 0, 150))
         self.screen.blit(overlay, (0, 0))
         # панель диалога
         panel = pygame.Rect(60, 80, WINDOW_WIDTH - 120, WINDOW_HEIGHT - 160)
         draw_panel(self.screen, panel)
-        # портрет большой
-        port_rect = pygame.Rect(panel.x + 20, panel.y + 20, 90, 90)
+        # портрет большой: снимок персонажа, иначе цветная карточка с инициалом
+        port_rect = pygame.Rect(panel.x + 20, panel.y + 20, 100, 100)
         pygame.draw.rect(self.screen, ch["portrait_color"], port_rect, border_radius=10)
-        pygame.draw.rect(self.screen, COLOR_ACCENT, port_rect, width=2, border_radius=10)
+        portrait_art = cover_image(str(ch.get("portrait", "")), (port_rect.w, port_rect.h))
         init = ch["name"][0]
-        txt = get_font(36, bold=True).render(init, True, (255, 255, 255))
-        self.screen.blit(txt, txt.get_rect(center=port_rect.center))
+        if blit_rounded_image(self.screen, portrait_art, port_rect, radius=10):
+            # инициал поверх снимка — в тёмной плашке, чтобы не закрывал лицо
+            badge = pygame.Rect(port_rect.x + 6, port_rect.bottom - 30, 24, 24)
+            pygame.draw.rect(self.screen, (12, 14, 20), badge, border_radius=5)
+            pygame.draw.rect(self.screen, COLOR_ACCENT, badge, width=1, border_radius=5)
+            txt = get_font(15, bold=True).render(init, True, (240, 232, 208))
+            self.screen.blit(txt, txt.get_rect(center=badge.center))
+        else:
+            txt = get_font(38, bold=True).render(init, True, (255, 255, 255))
+            self.screen.blit(txt, txt.get_rect(center=port_rect.center))
+        pygame.draw.rect(self.screen, COLOR_ACCENT, port_rect, width=2, border_radius=10)
         # имя и роль
         name = get_font(20, bold=True).render(ch["name"], True, COLOR_TEXT)
         self.screen.blit(name, (port_rect.right + 15, panel.y + 30))
@@ -1470,12 +1536,28 @@ class Game:
             # вопрос
             q_rect = pygame.Rect(panel.x + 20, panel.y + 130, panel.w - 40, 50)
             draw_panel(self.screen, q_rect, color=COLOR_ACCENT, border=COLOR_ACCENT)
-            # детектив говорит
+            # детектив говорит: маленький снимок выбранного детектива
+            av_rect = pygame.Rect(q_rect.right - 58, q_rect.y + 5, 40, 40)
+            avatar_art = cover_image(
+                self.state.detective.avatar_id + ".png", (av_rect.w, av_rect.h)
+            )
+            if not blit_rounded_image(self.screen, avatar_art, av_rect, radius=6):
+                pygame.draw.rect(self.screen, (20, 20, 20), av_rect, border_radius=6)
+                av_init = get_font(18, bold=True).render(
+                    self.state.detective.name[:1], True, COLOR_ACCENT
+                )
+                self.screen.blit(av_init, av_init.get_rect(center=av_rect.center))
+            pygame.draw.rect(self.screen, (10, 10, 10), av_rect, width=1, border_radius=6)
             det_name = get_font(11, bold=True).render(
                 self.state.detective.name.upper() + " :", True, (10, 10, 10)
             )
             self.screen.blit(det_name, (q_rect.x + 12, q_rect.y + 8))
             q_text = get_font(13, bold=True).render(q["q"], True, (10, 10, 10))
+            q_text = q_text.subsurface(
+                pygame.Rect(
+                    0, 0, max(1, min(q_text.get_width(), q_rect.w - 90)), q_text.get_height()
+                )
+            )
             self.screen.blit(q_text, (q_rect.x + 12, q_rect.y + 26))
             # ответ
             a_rect = pygame.Rect(panel.x + 20, q_rect.bottom + 15, panel.w - 40, 120)

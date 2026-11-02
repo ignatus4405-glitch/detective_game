@@ -69,3 +69,47 @@ def test_load_case_unknown_returns_none():
     from detective_game.data import load_case
 
     assert load_case("no_such_case_123") is None
+
+
+def test_every_case_has_existing_map_image():
+    """В каждом деле — карта-картинка, и файл на месте (вкладка «Карта»)."""
+    from detective_game.config import IMAGES_DIR
+    from detective_game.data import case_map
+
+    for case in list_cases():
+        rel = case_map(case)
+        assert rel.endswith((".jpg", ".jpeg", ".png")), f"{case['id']}: карта не картинка"
+        assert (IMAGES_DIR / rel).is_file(), f"{case['id']}: нет файла карты {rel}"
+
+
+def test_case_map_falls_back_to_default():
+    from detective_game.data import DEFAULT_CASE_MAP, case_map
+
+    assert case_map(None) == DEFAULT_CASE_MAP
+    assert case_map({"id": "x"}) == DEFAULT_CASE_MAP
+    assert case_map({"map": "maps/custom.jpg"}) == "maps/custom.jpg"
+
+
+def test_location_art_files_exist():
+    """Иллюстрации локаций из location_art ссылаются на существующие файлы."""
+    from detective_game.config import IMAGES_DIR
+    from detective_game.ui.location_art import LOCATION_ART, type_label
+
+    for kind, (rel, tint) in LOCATION_ART.items():
+        assert (IMAGES_DIR / rel).is_file(), f"{kind}: нет файла {rel}"
+        if tint is not None:
+            assert len(tint) == 4
+    # неизвестный тип не падает и не превращается в пустую строку
+    assert type_label({"type": "space_station"}) == "SPACE_STATION"
+    assert type_label({}) == ""
+
+
+def test_dialogues_are_long_enough():
+    """Больше диалогов: у каждого персонажа минимум 3 реплики."""
+    for case in list_cases():
+        assert len(case["characters"]) >= 2, f"{case['id']}: мало персонажей"
+        for ch in case["characters"]:
+            lines = ch.get("dialogue", [])
+            assert len(lines) >= 3, f"{case['id']}/{ch['id']}: всего {len(lines)} реплик"
+            for line in lines:
+                assert line.get("q") and line.get("a")
