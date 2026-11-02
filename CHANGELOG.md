@@ -6,6 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.16] — 2026-11-02
+
+### Fixed
+- **Настройки:** убрана дублирующая нижняя кнопка «← В МЕНЮ» (перекрывала «Применить»/«Сбросить прогресс», см. скрин 0.1.15). Навигация остаётся через верхнюю «← НАЗАД» в шапке.
+
+
 ## [0.1.15] — 2026-11-02
 
 ### Fixed
@@ -130,7 +136,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.15...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.16...HEAD
+[0.1.16]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.15...v0.1.16
 [0.1.15]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.12...v0.1.13

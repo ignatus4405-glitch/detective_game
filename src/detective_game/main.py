@@ -1864,13 +1864,6 @@ class Game:
             save_game(self.state)
             self.add_notification("Прогресс сброшен — начинаем заново")
 
-        # Кнопка НАЗАД внизу - центр экрана, всегда видна
-        btn_back = Button((W // 2 - 80, H - 44, 160, 36), "←  В МЕНЮ", style="secondary")
-        btn_back.update(mouse, pressed)
-        btn_back.draw(self.screen, get_font(11, bold=True))
-        if btn_back.clicked:
-            self.screen_name = "menu"
-
     def _draw_dropdown_overlay(self, dropdowns):
         # Рисует открытые списки поверх всего (вторая фаза)
         for dd in dropdowns:
