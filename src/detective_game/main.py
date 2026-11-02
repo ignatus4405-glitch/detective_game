@@ -28,7 +28,7 @@ from .ui.widgets import (
     draw_text_wrapped,
     get_font,
 )
-from .updater import UpdateChecker
+from .updater import UpdateChecker, consume_update_result, install_requires_elevation
 
 try:
     from .settings_manager import (
@@ -175,17 +175,33 @@ class Game:
         self.notebook_tab = "clues"  # clues | suspects | map
         # accusation
         self.accusation_selected = None
-        # updater
+        # updater — проверяем только если включена авто-проверка в настройках
         self.update_checker = UpdateChecker()
-        self.update_checker.start()
+        if self.settings.get("auto_check_updates", True):
+            self.update_checker.start()
         self.update_notified = False
         self.update_dismissed = False
         # --- Новые виджеты настроек ---
         self._init_settings_widgets()
         # notifications queue
         self.notifications = []  # list of (text, time)
+        # итог прошлой установки обновления (обновилось / не обновилось)
+        self._report_update_result(consume_update_result())
         # time
         self.start_time = time.time()
+
+    def _report_update_result(self, result):
+        """Показывает, чем закончилась установка обновления из прошлого запуска."""
+        if not result:
+            return
+        if result.get("status") == "installed":
+            self.add_notification(f"Обновление установлено — теперь v{result['current']}")
+        else:
+            log = result.get("log") or ""
+            hint = f" Журнал: {log}" if log else ""
+            self.add_notification(
+                f"Обновление до v{result.get('target', '?')} не установилось (у вас v{result['current']}).{hint}"
+            )
 
     def _init_settings_widgets(self):
         # Дропдауны и слайдеры для настроек
@@ -282,6 +298,45 @@ class Game:
     def add_notification(self, text):
         self.notifications.append((text, time.time() + 4))
         print(f"[NOTIFY] {text}")
+
+    def _install_update(self):
+        """Запускает установщик скачанного обновления и выходит из игры.
+
+        Если текущая папка игры недоступна на запись (Program Files), установка
+        идёт через видимый мастер с запросом UAC — иначе Windows молча
+        отказывает в записи и «игра не обновляется».
+        """
+        path = getattr(self.update_checker, "downloaded_path", None)
+        if not path or not getattr(path, "exists", lambda: False)():
+            self.add_notification("Файл обновления не найден — скачайте его заново")
+            return False
+        if str(path).lower().endswith(".zip"):
+            try:
+                from .updater import open_download_folder
+
+                open_download_folder(path)
+            except Exception:
+                pass
+            self.add_notification(
+                "Обновление скачано архивом — закройте игру и распакуйте его вручную"
+            )
+            return False
+        try:
+            if install_requires_elevation():
+                self.add_notification(
+                    "Установка: подтвердите запрос администратора Windows (UAC)"
+                )
+            else:
+                self.add_notification("Установка… игра перезапустится автоматически")
+            if self.update_checker.install():
+                pygame.quit()
+                sys.exit(0)
+            self.add_notification(
+                "Не удалось запустить установщик — откройте папку загрузок кнопкой «Папка»"
+            )
+        except Exception as e:
+            self.add_notification(f"Ошибка установки: {e}")
+        return False
 
     def draw_notifications(self):
         now = time.time()
@@ -1868,8 +1923,10 @@ class Game:
         save_hint = font_small.render(f"Сохранения: {get_save_dir()}", True, COLOR_TEXT_DARK)
         self.screen.blit(save_hint, (right.x + 20, ry))
         ry += 18
+        from . import __version__ as _game_version
+
         ver2 = font_small.render(
-            f"Игра: Детектив Блэквил  •  Python {__import__('sys').version.split()[0]}",
+            f"Игра: v{_game_version}  •  Python {__import__('sys').version.split()[0]}",
             True,
             COLOR_TEXT_DARK,
         )
@@ -1923,15 +1980,7 @@ class Game:
                 btn_install.update(mouse, pressed)
                 btn_install.draw(self.screen, get_font(8, bold=True))
                 if btn_install.clicked:
-                    self.add_notification(f"Установка {checker.downloaded_path.name}… игра перезапустится автоматически")
-                    try:
-                        from .updater import run_installer
-                        if run_installer(checker.downloaded_path, silent=True, autolaunch=True):
-                            import sys as _sys
-                            pygame.quit()
-                            _sys.exit(0)
-                    except Exception as e:
-                        self.add_notification(f"Ошибка запуска: {e}")
+                    self._install_update()
                 btn_folder = Button((upd_rect.x + 160, upd_rect.y + 58, 80, 26), "Папка")
                 btn_folder.update(mouse, pressed)
                 btn_folder.draw(self.screen, get_font(8, bold=True))
@@ -1959,10 +2008,18 @@ class Game:
             if getattr(checker, "download_error", None):
                 err_txt = get_font(8).render(checker.download_error[:50], True, COLOR_RED)
                 self.screen.blit(err_txt, (upd_rect.x + 12, upd_rect.y + 74 - 2))
-        elif checker.done and not checker.result and checker.done:
+        elif checker.done and checker.error:
+            # Проверка не удалась (нет сети / лимит GitHub) — не врём про «последнюю версию»
+            err = get_font(10).render(
+                f"Не удалось проверить: {checker.error}"[:60], True, COLOR_RED
+            )
+            self.screen.blit(err, (right.x + 20, ry))
+            hint = get_font(9).render(
+                "Проверьте интернет и нажмите кнопку ещё раз", True, COLOR_TEXT_DARK
+            )
+            self.screen.blit(hint, (right.x + 20, ry + 18))
+        elif checker.done and not checker.result:
             # Нет обновлений
-            if hasattr(self, "_checked_once"):
-                pass
             txt = font_small.render("У вас последняя версия ✓", True, COLOR_GREEN)
             self.screen.blit(txt, (right.x + 20, ry))
         ry += 100
@@ -2038,7 +2095,9 @@ class Game:
                 rect = pygame.Rect(WINDOW_WIDTH // 2 - 360, 10, 720, 56)
                 pygame.draw.rect(self.screen, (16, 45, 70), rect, border_radius=8)
                 pygame.draw.rect(self.screen, (80, 140, 220), rect, width=2, border_radius=8)
-                ver_txt = checker.result['latest'] if checker.result and checker.result.get('latest') else ''
+                ver_txt = getattr(checker, "download_target_version", "") or (
+                    checker.result['latest'] if checker.result and checker.result.get('latest') else ''
+                )
                 txt = get_font(12, bold=True).render(
                     f"✓ Обновление v{ver_txt} скачано: {checker.downloaded_path.name}", True, (255, 255, 255)
                 )
@@ -2051,15 +2110,7 @@ class Game:
                 btn_inst.update(mouse, pressed)
                 btn_inst.draw(self.screen, get_font(9, bold=True))
                 if btn_inst.clicked:
-                    self.add_notification("Установка обновления… игра перезапустится автоматически")
-                    try:
-                        from .updater import run_installer
-                        if run_installer(checker.downloaded_path, silent=True, autolaunch=True):
-                            import sys as _sys
-                            pygame.quit()
-                            _sys.exit(0)
-                    except Exception as e:
-                        self.add_notification(f"Ошибка установки: {e}")
+                    self._install_update()
                 close_rect = pygame.Rect(rect.right - 30, rect.y + 10, 20, 20)
                 pygame.draw.rect(self.screen, (40, 70, 110), close_rect, border_radius=4)
                 x_txt = get_font(12, bold=True).render("×", True, (255, 255, 255))
@@ -2103,15 +2154,7 @@ class Game:
             btn_install.update(mouse, pressed)
             btn_install.draw(self.screen, get_font(9, bold=True))
             if btn_install.clicked:
-                self.add_notification("Установка обновления… игра перезапустится автоматически")
-                try:
-                    from .updater import run_installer
-                    if run_installer(checker.downloaded_path, silent=True, autolaunch=True):
-                        import sys as _sys
-                        pygame.quit()
-                        _sys.exit(0)
-                except Exception as e:
-                    self.add_notification(f"Ошибка установки: {e}")
+                self._install_update()
             btn_open = Button((rect.right - 60, rect.y + 12, 40, 26), "Папка")
             btn_open.update(mouse, pressed)
             btn_open.draw(self.screen, get_font(8, bold=True))

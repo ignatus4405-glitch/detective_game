@@ -12,7 +12,7 @@
   #define VERSION GetEnv("VERSION")
 #endif
 #if VERSION == ""
-  #define VERSION "0.1.23"
+  #define VERSION "0.1.24"
 #endif
 #define MyAppVersion VERSION
 #define MyAppExe "DetectiveBlackville.exe"
@@ -43,6 +43,12 @@ WizardStyle=modern
 WizardSizePercent=110,110
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
+; Обновление всегда идёт туда, куда его направил апдейтер (/DIR),
+; а не «как было в прошлый раз» — иначе тихая установка могла ждать UAC
+; и молча отменяться.
+UsePreviousPrivileges=no
+; Журнал установки рядом с setup.exe/в {tmp} — нужен для диагностики
+SetupLogging=yes
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 VersionInfoVersion={#MyAppVersion}

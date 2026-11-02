@@ -58,7 +58,9 @@
 - Источник: файл `VERSION` (например, `0.1.0`)
 - Дублируется в `pyproject.toml:project.version` — CI проверяет синхрон
 - Тег: `v0.1.0` (с префиксом `v`)
-- `src/detective_game/__init__.py:__version__` читает `VERSION` или fallback на package metadata
+- `detective_game.__version__` = `get_version()`: файл `VERSION` (исходники / `<app>/_internal/VERSION` в сборке)
+  → вшитый `detective_game/_build_version.py` (генерит `tools/generate_version_info.py`)
+  → `importlib.metadata` → `0.1.0`. В PyInstaller-команду обязателен `--add-data "VERSION;."`.
 
 ### Бамп версии
 

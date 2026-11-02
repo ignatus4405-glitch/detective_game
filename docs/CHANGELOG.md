@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [0.1.24] — 2026-11-02
+
+### Fixed
+- **«После обновления игра не обновляется»:** frozen-сборка не находила `VERSION` → всегда `0.1.0` и вечный баннер обновления. VERSION теперь кладётся в бандл (`--add-data`), `generate_version_info.py` вшивает `BUILD_VERSION`, `get_version()` ищет во всех путях onedir/onefile.
+- Апдейтер ставит обновление в **текущую** папку игры (`/DIR`), а не в `%LOCALAPPDATA%\Programs`; при недоступной на запись папке — видимый мастер с UAC.
+- Helper ждёт PID игры, пути в bat через env (кириллица), mutex для AppMutex, `/LOG` в `%TEMP%\blackville_update.log`.
+- Ошибки проверки показываются в настройках (`UpdateCheckError`), итог установки — при следующем старте (`update_state.json`); авто-чек уважает тумблер.
+
 ## [0.1.23] — 2026-11-02
 
 ### Fixed

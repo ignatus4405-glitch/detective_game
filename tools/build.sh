@@ -23,6 +23,9 @@ pyinstaller --name DetectiveBlackville --onefile --windowed --clean --noconfirm 
   --collect-all detective_game \
   --add-data "src/detective_game/assets:detective_game/assets" \
   --add-data "src/detective_game/cases:detective_game/cases" \
+  --add-data "VERSION:." \
+  --add-data "VERSION:detective_game" \
+  --hidden-import detective_game._build_version \
   launcher.py
 
 if [ ! -f dist/DetectiveBlackville ]; then

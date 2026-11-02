@@ -20,6 +20,8 @@ venv/
 build_version_info.txt
 build_app.manifest
 crash.log
+# генерируется tools/generate_version_info.py при сборке
+src/detective_game/_build_version.py
 
 # Game
 saves/
