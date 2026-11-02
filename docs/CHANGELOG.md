@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [0.1.36] — 2026-11-02
+
+### Added
+- `Game.next_case()/start_next_case()/_ending_action()/_ending_success()`; кнопка «СЛЕДУЮЩЕЕ ДЕЛО →» и `game.ending_rects` на экране финала.
+- `GameState.completed_cases` (+ сериализация), бейдж «✓ ПРОЙДЕНО» в выборе дела.
+- `synth.track_lounge/harbor/precinct/mystery/chase`; `audio.MUSIC_TRACKS` расширен до 10.
+- `Game._music_key()/LOCATION_MOODS` — тема по типу локации (`bar`, `port`, `warehouse`, `police`, `crime`, `vault`, `mansion`, `hub`, `office`).
+- `tests/test_progress.py`; в `test_audio.py` — рендер новых тем.
+
+### Notes
+- Ключи `ending_rects`: `menu`, `next`, `replay` (нет `next` после провала и на последнем деле).
+- `MUSIC_TRACKS` расширен → у старых пользователей 5 файлов в кэше, остальные досчитаются в фоне при следующем запуске.
+
 ## [0.1.35] — 2026-11-02
 
 ### Added

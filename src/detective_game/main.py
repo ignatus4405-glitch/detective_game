@@ -194,6 +194,7 @@ class Game:
         self.puzzle_clue = None
         self.puzzle_rects = {}
         self._puzzle_started_at = 0.0
+        self.ending_rects = {}
         # звук и музыка
         self.audio = audio
         self.audio.init()
@@ -531,6 +532,16 @@ class Game:
             if handle_tutorial_key(self, self.tutorial, event):
                 return
             return
+        if self.screen_name == "ending" and event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                if self._ending_success() and self.next_case():
+                    self._ending_action("next")
+                else:
+                    self._ending_action("menu")
+                return
+            if event.key == pygame.K_ESCAPE:
+                self._ending_action("menu")
+                return
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             self.audio.play_sfx("click")
         if self.screen_name == "puzzle":
@@ -696,22 +707,42 @@ class Game:
         "map": "investigation",
         "location": "investigation",
         "dialogue": "investigation",
-        "notebook": "investigation",
-        "accusation": "tension",
+        "notebook": "mystery",
+        "accusation": "chase",
         "puzzle": "tension",
     }
 
-    def _update_music(self):
-        """Подобрать музыку под экран: спокойно, расследование, напряжение."""
-        if self.screen_name == self._music_screen:
-            return
-        self._music_screen = self.screen_name
+    # у каждого типа локации — своя тема: бар, порт, участок, место преступления
+    LOCATION_MOODS = {
+        "bar": "lounge",
+        "port": "harbor",
+        "warehouse": "harbor",
+        "harbor": "harbor",
+        "police": "precinct",
+        "crime": "mystery",
+        "vault": "mystery",
+        "mansion": "mystery",
+        "hub": "noir",
+        "office": "noir",
+    }
+
+    def _music_key(self) -> str:
+        """Какая тема должна играть прямо сейчас."""
         if self.screen_name == "ending":
             resolution = ending_logic.resolve(self.current_case, self.state) if self.current_case else {}
-            self.audio.play_music("success" if resolution.get("success") else "failure")
+            return "success" if resolution.get("success") else "failure"
+        if self.screen_name == "location":
+            loc = get_location(self.current_case, self.location_id) if self.current_case else None
+            return self.LOCATION_MOODS.get(str((loc or {}).get("type", "")), "investigation")
+        return self.MOODS.get(self.screen_name, "noir")
+
+    def _update_music(self):
+        """Подобрать музыку под экран — и под место, если мы в локации."""
+        key = self._music_key()
+        if key == self._music_screen:
             return
-        mood = self.MOODS.get(self.screen_name, "noir")
-        self.audio.play_music(mood)
+        self._music_screen = key
+        self.audio.play_music(key)
 
     def draw(self):
         # Letterbox рендер: рисуем всё на логический холст 1280×720, затем масштабируем
@@ -1126,6 +1157,12 @@ class Game:
                     fallback=(case["title"][:1] or "?"),
                 )
             pygame.draw.rect(self.screen, COLOR_BORDER, poster, width=1, border_radius=8)
+            if case.get("id") in getattr(self.state, "completed_cases", set()):
+                done_txt = get_font(9, bold=True).render("✓ ПРОЙДЕНО", True, (12, 12, 12))
+                done_chip = pygame.Rect(0, 0, done_txt.get_width() + 14, 18)
+                done_chip.topright = (poster.right - 8, poster.y + 8)
+                pygame.draw.rect(self.screen, COLOR_GREEN, done_chip, border_radius=9)
+                self.screen.blit(done_txt, (done_chip.x + 7, done_chip.y + 4))
             # заголовок и подзаголовок
             title_surf = get_font(18, bold=True).render(case["title"], True, COLOR_TEXT)
             self.screen.blit(title_surf, card.title_pos)
@@ -1195,10 +1232,37 @@ class Game:
         self.state.dialogue_choices = {}
         self.state.trust = {}
         self.state.trust_bonus_taken = set()
+        self.accusation_selected = None
+        self.ending_rects = {}
         save_game(self.state)
         self.location_id = "office"
         self.add_notification(f"Дело «{case['title']}» начато. Удачи, {self.state.detective.name}!")
         self.play_cutscene(case_id)
+
+    # ── прогресс: следующее дело ─────────────────────────────────────
+
+    def next_case(self):
+        """Следующее дело по порядку карточек или None, если это последнее."""
+        case_id = str((self.current_case or {}).get("id", ""))
+        ids = [str(c.get("id", "")) for c in self.cases]
+        if case_id not in ids:
+            return None
+        index = ids.index(case_id) + 1
+        return self.cases[index] if index < len(ids) else None
+
+    def _ending_success(self) -> bool:
+        """Дело закрыто успешно (для кнопки «Следующее дело»)."""
+        if not self.current_case:
+            return False
+        return bool(ending_logic.resolve(self.current_case, self.state).get("success"))
+
+    def start_next_case(self) -> bool:
+        """Начать следующее дело (с катсценой). False — если следующего нет."""
+        nxt = self.next_case()
+        if not nxt or not nxt.get("id"):
+            return False
+        self.start_case(nxt["id"])
+        return True
 
     # ── катсцена ─────────────────────────────────────────────────────
 
@@ -2487,6 +2551,8 @@ class Game:
             self.state, case_id
         )
         ending_logic.record(self.state, case_id, resolution)
+        if resolution.get("success"):
+            self.state.completed_cases.add(case_id)
         self._ending_is_new = not known
         save_game(self.state)
         self.screen_name = "ending"
@@ -2569,24 +2635,60 @@ class Game:
             COLOR_TEXT_DARK,
         )
         self.screen.blit(hint, hint.get_rect(center=(panel.centerx, panel.y + 444)))
-        # кнопки
+        # кнопки: после успеха добавляем переход к следующему делу
         mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
-        btn_menu = Button((panel.x + 40, panel.bottom - 50, 200, 40), "В МЕНЮ")
-        btn_replay = Button(
-            (panel.centerx + 20, panel.bottom - 50, 200, 40), "СЫГРАТЬ ЕЩЁ", accent=True
-        )
-        for btn, act in [(btn_menu, "menu"), (btn_replay, "replay")]:
+        btn_y = panel.bottom - 50
+        nxt = self.next_case() if success else None
+        if nxt:
+            width, gap = 208, 22
+            x0 = panel.centerx - (width * 3 + gap * 2) // 2
+            rects = {
+                "menu": pygame.Rect(x0, btn_y, width, 40),
+                "next": pygame.Rect(x0 + width + gap, btn_y, width, 40),
+                "replay": pygame.Rect(x0 + 2 * (width + gap), btn_y, width, 40),
+            }
+            line = get_font(11, bold=True).render(
+                f"Дальше по порядку: «{nxt.get('title', '')}»", True, COLOR_ACCENT
+            )
+            self.screen.blit(line, line.get_rect(center=(panel.centerx, panel.bottom - 74)))
+        else:
+            rects = {
+                "menu": pygame.Rect(panel.x + 40, btn_y, 200, 40),
+                "replay": pygame.Rect(panel.centerx + 20, btn_y, 200, 40),
+            }
+            if success:
+                line = get_font(11, bold=True).render(
+                    "Все дела сезона закрыты — спасибо, детектив", True, COLOR_GREEN
+                )
+                self.screen.blit(line, line.get_rect(center=(panel.centerx, panel.bottom - 74)))
+        self.ending_rects = dict(rects)
+        buttons = [
+            ("menu", "В МЕНЮ", False),
+            ("next", "СЛЕДУЮЩЕЕ ДЕЛО →", True),
+            ("replay", "СЫГРАТЬ ЕЩЁ", not nxt),
+        ]
+        for key, label, accent in buttons:
+            rect = rects.get(key)
+            if rect is None:
+                continue
+            btn = Button(rect, label, accent=accent)
             btn.update(mouse, pressed)
             btn.draw(self.screen, get_font(13, bold=True))
             if btn.clicked and self._click_once():
-                pygame.time.wait(150)
-                if act == "menu":
-                    self.screen_name = "menu"
-                else:
-                    # рестарт кейса
-                    self.start_case(self.current_case["id"])
-                    self.screen_name = "map"
+                self._ending_action(key)
+
+    def _ending_action(self, action: str):
+        """Действия кнопок финального экрана (общие для клика и тестов)."""
+        pygame.time.wait(150)
+        if action == "menu":
+            self.screen_name = "menu"
+        elif action == "replay":
+            if self.current_case:
+                self.start_case(self.current_case["id"])
+                self.screen_name = "map"
+        elif action == "next" and not self.start_next_case():
+            self.screen_name = "case_select"
 
     def draw_settings(self):
         # Новые настройки экрана — разрешения, монитор, режим окна + звуки + обновления

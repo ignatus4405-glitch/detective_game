@@ -49,6 +49,14 @@ def test_note_frequencies():
     assert round(synth.note_hz("C4")) == 262
 
 
+@pytest.mark.parametrize("name", ["lounge", "harbor", "precinct", "mystery", "chase"])
+def test_new_tracks_render(name):
+    """Новые темы должны быть слышимыми и не короче 10 секунд."""
+    buf, seconds = synth.render_track(name)
+    assert seconds >= 10.0, name
+    assert max(abs(sample) for sample in buf) > 0.05, name
+
+
 def test_success_track_is_short_and_musical():
     buf, seconds = synth.render_track("success")
     assert 3.0 <= seconds <= 10.0

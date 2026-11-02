@@ -369,12 +369,261 @@ def track_failure() -> Tuple[List[float], float]:
     return buf, len(buf) / SAMPLE_RATE
 
 
+def track_lounge() -> Tuple[List[float], float]:
+    """Бар «Синяя Луна»: ленивый свинг, контрабас и стаканы."""
+    bpm = 100
+    beat = 60.0 / bpm
+    bars = 8
+    total = bars * 4 * beat
+    buf = _bars_to_buf(total)
+    # Cm7 | F7 | Bbmaj7 | Ebmaj7 | Am7 | D7 | Gm7 | C7
+    chords = [
+        ("C3", "Eb3", "G3", "Bb3"),
+        ("F2", "A2", "C3", "Eb3"),
+        ("Bb2", "D3", "F3", "A3"),
+        ("Eb3", "G3", "Bb3", "D4"),
+        ("A2", "C3", "E3", "G3"),
+        ("D3", "F#3", "A3", "C4"),
+        ("G2", "Bb2", "D3", "F3"),
+        ("C3", "E3", "G3", "Bb3"),
+    ]
+    rng = random.Random(31)
+    for bar, chord in enumerate(chords):
+        start = bar * 4 * beat
+        # «духовые» короткие стабы на второй и четвёртой доле
+        for offset in (1, 3):
+            _chord(
+                buf, start + offset * beat, beat * 0.55, chord,
+                amp=0.026, attack=0.03, release=0.4,
+            )
+        # контрабас: простая «прогулка» по аккорду
+        walk = [chord[0], chord[2], chord[1], chord[3]]
+        for i, name in enumerate(walk):
+            add_note(
+                buf,
+                start + i * beat,
+                note_hz(name) / 2,
+                beat * 0.8,
+                amp=0.20,
+                kind="sine",
+                attack=0.012,
+                release=beat * 0.45,
+            )
+    # свингующие «тарелки»
+    for bar in range(bars):
+        start = bar * 4 * beat
+        for i in range(4):
+            add_noise(buf, start + i * beat, 0.12, amp=0.02, decay=45.0, rng=rng, hat=True)
+            add_noise(
+                buf,
+                start + i * beat + beat * 2 / 3,
+                0.08,
+                amp=0.012,
+                decay=50.0,
+                rng=rng,
+                hat=True,
+            )
+    # редкие фортепианные «капли» на слабой доле
+    for bar, t0 in ((1, 3.5), (3, 2.5), (5, 3.0), (7, 1.5)):
+        _pluck(buf, bar * 4 * beat + t0 * beat, ("Bb4", "D5"), amp=0.045, spacing=0.16)
+    _fade_edges(buf)
+    return buf, total
+
+
+def track_harbor() -> Tuple[List[float], float]:
+    """Порт: туман, низкий гудок и далёкий буй."""
+    bpm = 56
+    beat = 60.0 / bpm
+    bars = 6
+    total = bars * 4 * beat
+    buf = _bars_to_buf(total)
+    # дрон: две низкие ноты на весь трек
+    for bar in range(bars):
+        start = bar * 4 * beat
+        add_note(
+            buf, start, note_hz("D2"), 4 * beat, amp=0.10, kind="organ", attack=0.9, release=1.6
+        )
+        add_note(buf, start, note_hz("A2"), 4 * beat, amp=0.05, kind="sine", attack=1.1, release=1.6)
+    # гудок парохода — дважды, как в тумане
+    for t0 in (beat * 3, beat * 17):
+        add_note(buf, t0, note_hz("F2"), 2.2, amp=0.17, kind="organ", attack=0.25, release=0.9)
+        add_note(buf, t0, note_hz("C3"), 2.2, amp=0.08, kind="sine", attack=0.2, release=1.2)
+    # далёкий буй
+    for bar in (1, 3, 5):
+        _pluck(buf, bar * 4 * beat + 2 * beat, ("A5",), amp=0.035, kind="sine")
+    # «ветер»: медленные шумовые волны
+    rng = random.Random(41)
+    for bar in range(bars):
+        add_noise(buf, bar * 4 * beat, 4 * beat * 0.95, amp=0.012, decay=0.4, rng=rng)
+    _fade_edges(buf)
+    return buf, total
+
+
+def track_precinct() -> Tuple[List[float], float]:
+    """Участок: стук машинки, гул лампы и усталые аккорды."""
+    bpm = 88
+    beat = 60.0 / bpm
+    bars = 8
+    total = bars * 4 * beat
+    buf = _bars_to_buf(total)
+    chords = [
+        ("D3", "F3", "A3"),
+        ("D3", "F3", "Bb3"),
+        ("C3", "E3", "G3"),
+        ("D3", "F3", "A3"),
+        ("Bb2", "D3", "F3"),
+        ("A2", "C#3", "E3"),
+        ("D3", "F3", "A3"),
+        ("D3", "F3", "A3"),
+    ]
+    for bar, chord in enumerate(chords):
+        start = bar * 4 * beat
+        _chord(buf, start, 4 * beat, chord, amp=0.026, attack=0.7, release=1.3)
+        add_note(
+            buf,
+            start,
+            note_hz(chord[0]) / 2,
+            4 * beat,
+            amp=0.12,
+            kind="sine",
+            attack=0.1,
+            release=1.2,
+        )
+    # машинка: дробный стук, будто кто-то печатает отчёт
+    rng = random.Random(53)
+    for bar in range(bars):
+        for i in range(6):
+            t0 = bar * 4 * beat + (i * 0.62 + rng.uniform(0.0, 0.1)) * beat
+            add_noise(buf, t0, 0.045, amp=0.05, decay=70.0, rng=rng, hat=True)
+    # редкая мелодия «кларнета» — по одной ноте на два такта
+    for bar, name in ((0, "A4"), (2, "Bb4"), (4, "F4"), (6, "E4")):
+        add_note(
+            buf,
+            bar * 4 * beat + beat,
+            note_hz(name),
+            beat * 1.6,
+            amp=0.06,
+            kind="triangle",
+            attack=0.05,
+            release=0.5,
+        )
+    _fade_edges(buf)
+    return buf, total
+
+
+def track_mystery() -> Tuple[List[float], float]:
+    """Тайна: разреженные высокие ноты и целотонный ряд."""
+    bpm = 66
+    beat = 60.0 / bpm
+    bars = 6
+    total = bars * 4 * beat
+    buf = _bars_to_buf(total)
+    # дрон с биениями: две близкие низкие ноты
+    add_note(buf, 0.0, note_hz("D2"), total, amp=0.09, kind="sine", attack=2.0, release=2.5)
+    add_note(buf, 0.0, note_hz("D2") * 1.006, total, amp=0.06, kind="sine", attack=2.5, release=2.5)
+    # целотонный ряд: D, E, F#, G#, A#, C
+    notes = ["D4", "E4", "F#4", "G#4", "A#4", "C5", "A#4", "G#4", "F#4", "E4"]
+    for i, name in enumerate(notes):
+        add_note(
+            buf,
+            i * 2 * beat,
+            note_hz(name),
+            1.4,
+            amp=0.045,
+            kind="triangle",
+            attack=0.02,
+            release=1.1,
+        )
+    # глухие удары где-то за стеной
+    rng = random.Random(67)
+    for bar in (1, 3, 5):
+        add_note(
+            buf,
+            bar * 4 * beat,
+            note_hz("D2") / 2,
+            0.7,
+            amp=0.18,
+            kind="sine",
+            attack=0.005,
+            release=0.5,
+        )
+        add_noise(buf, bar * 4 * beat + 2 * beat, 0.5, amp=0.02, decay=18.0, rng=rng)
+    _fade_edges(buf)
+    return buf, total
+
+
+def track_chase() -> Tuple[List[float], float]:
+    """Погоня: частый пульс, стабы и «дыхание» баса — для обвинения."""
+    bpm = 138
+    beat = 60.0 / bpm
+    bars = 8
+    total = bars * 4 * beat
+    buf = _bars_to_buf(total)
+    progression = [
+        ("D3", "F3", "A3"),
+        ("D3", "F3", "A3"),
+        ("Bb2", "D3", "F3"),
+        ("C3", "E3", "G3"),
+    ]
+    rng = random.Random(79)
+    for bar in range(bars):
+        start = bar * 4 * beat
+        chord = progression[bar % len(progression)]
+        _chord(buf, start, 2 * beat, chord, amp=0.03, kind="saw", attack=0.05, release=0.4)
+        _chord(
+            buf,
+            start + 2 * beat,
+            2 * beat,
+            chord,
+            amp=0.024,
+            kind="saw",
+            attack=0.05,
+            release=0.4,
+        )
+        # восьмые баса
+        for i in range(8):
+            add_note(
+                buf,
+                start + i * beat / 2,
+                note_hz(chord[0]) / 2,
+                beat * 0.42,
+                amp=0.19 if i % 2 == 0 else 0.11,
+                kind="sine",
+                attack=0.004,
+                release=beat * 0.25,
+            )
+        # «малый барабан» на 2 и 4, хэт по восьмым
+        for i in range(8):
+            add_noise(buf, start + i * beat / 2, 0.06, amp=0.018, decay=60.0, rng=rng, hat=True)
+        for i in (1, 3):
+            add_noise(buf, start + i * beat, 0.18, amp=0.06, decay=26.0, rng=rng)
+        # короткие стабы духовых
+        for offset in (1.5, 3.5):
+            _chord(
+                buf,
+                start + offset * beat,
+                beat * 0.3,
+                chord,
+                amp=0.022,
+                kind="square",
+                attack=0.004,
+                release=0.2,
+            )
+    _fade_edges(buf)
+    return buf, total
+
+
 TRACKS = {
     "noir": track_noir,
     "investigation": track_investigation,
     "tension": track_tension,
     "success": track_success,
     "failure": track_failure,
+    "lounge": track_lounge,
+    "harbor": track_harbor,
+    "precinct": track_precinct,
+    "mystery": track_mystery,
+    "chase": track_chase,
 }
 
 # ── звуковые эффекты ──────────────────────────────────────────────────
