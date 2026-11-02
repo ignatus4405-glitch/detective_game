@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.1.35] — 2026-11-02
+
+### Added
+- `synth.py` — синтез WAV на stdlib (5 тем + 9 sfx), `audio.py` — движок (кэш `<save>/music`, фоновая генерация, `play_voice/voice_length`, `set_volumes`).
+- `puzzles.py` — `Puzzle` (safe/lockpick/wires/sequence), `for_clue`, `difficulty_label`; `ui/puzzle_view.py` — экран и ввод.
+- `assets/voice/cutscene_<дело>_<N>.ogg` — озвучка 3 катсцен; текст = подписи.
+- `tests/test_puzzles.py`, `tests/test_audio.py`; в `data.py` — по 3 `puzzle`-спеки на дело.
+
+### Fixed
+- `Game.update()` не обновлял `"puzzle"` → отмычки стояли; добавлено в кортеж экранов.
+- `safe` не принимал код строкой.
+
+### Notes
+- Микшер 44.1 кГц (`MIXER_RATE`), синтез 16 кГц — пересэмплирование на загрузке.
+- Ключи озвучки: `cutscene_<case>_<1..3>`; `Game._speak_cutscene()` по смене кадра, `stop_voice()` на выходе.
+
 ## [0.1.25] — 2026-11-02
 
 ### Fixed

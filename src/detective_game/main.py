@@ -5,8 +5,9 @@ import time
 
 import pygame
 
-from . import dialogue, get_version_source
+from . import dialogue, get_version_source, puzzles
 from . import endings as ending_logic
+from .audio import audio
 from .case_cutscenes import cutscene_for
 from .config import *
 from .cutscene import CutscenePlayer, cutscene_button_rect
@@ -34,6 +35,7 @@ from .ui.layout import (
     settings_layout,
 )
 from .ui.location_art import location_art, type_label
+from .ui.puzzle_view import draw_puzzle_screen, handle_puzzle_click, handle_puzzle_key
 from .ui.tutorial import TutorialState
 from .ui.tutorial_view import (
     draw_tutorial_screen,
@@ -185,8 +187,22 @@ class Game:
         if self.state.current_case_id:
             self.current_case = load_case(self.state.current_case_id)
         # UI state
-        self.screen_name = "menu"  # menu | customization | case_select | map | location | dialogue | notebook | accusation | ending | settings | cutscene
+        self.screen_name = "menu"  # menu | ... | cutscene | puzzle
         self.cutscene: CutscenePlayer | None = None
+        # головоломки
+        self.puzzle = None
+        self.puzzle_clue = None
+        self.puzzle_rects = {}
+        self._puzzle_started_at = 0.0
+        # звук и музыка
+        self.audio = audio
+        self.audio.init()
+        self.audio.set_volumes(
+            music=self.settings.get("music_volume", 0.5),
+            sfx=self.settings.get("sfx_volume", 0.7),
+            voice=self.settings.get("voice_enabled", True),
+        )
+        self._music_screen = None
         self.prev_screen = "menu"
         self.selected_avatar = 0
         self.selected_bg = self.state.detective.background
@@ -318,6 +334,11 @@ class Game:
             checked=self.settings.get("auto_check_updates", True),
             label="Авто-проверка обновлений",
         )
+        self.voice_toggle = Toggle(
+            pygame.Rect(0, 0, 44, 24),
+            checked=self.settings.get("voice_enabled", True),
+            label="Озвучка",
+        )
         # Превью применения
         self._pending_resolution = f"{cur_res[0]}x{cur_res[1]}"
         self._pending_monitor = str(cur_mon)
@@ -335,6 +356,12 @@ class Game:
             self.settings["window_mode"] = self._pending_window_mode
             self.settings["sfx_volume"] = self.sfx_slider.value
             self.settings["music_volume"] = self.music_slider.value
+            self.settings["voice_enabled"] = self.voice_toggle.checked
+            self.audio.set_volumes(
+                music=self.settings["music_volume"],
+                sfx=self.settings["sfx_volume"],
+                voice=self.settings["voice_enabled"],
+            )
             self.settings["auto_check_updates"] = self.auto_update_toggle.checked
             from .settings_manager import apply_display_settings
 
@@ -504,6 +531,14 @@ class Game:
             if handle_tutorial_key(self, self.tutorial, event):
                 return
             return
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            self.audio.play_sfx("click")
+        if self.screen_name == "puzzle":
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                handle_puzzle_click(self, event.pos)
+            elif event.type == pygame.KEYDOWN:
+                handle_puzzle_key(self, event)
+            return
         if self.screen_name == "cutscene":
             self.handle_cutscene_event(event)
             return
@@ -548,6 +583,10 @@ class Game:
                     return
                 if self.auto_update_toggle.handle_event(event):
                     self._settings_changed = True
+                    return
+                if self.voice_toggle.handle_event(event):
+                    self._settings_changed = True
+                    self.audio.play_sfx("click")
                     return
         if self.screen_name == "customization":
             # Единый макет: те же прямоугольники, что и при отрисовке (логические
@@ -626,19 +665,53 @@ class Game:
     def update(self, mouse_pos, mouse_pressed):
         if not mouse_pressed:
             self._click_latch = False
+        self.audio.update()
+        self._update_music()
         # обновление времени
         if self.state.case_state == "in_progress":
             self.state.total_playtime += 1 / FPS
-        if self.screen_name in ("tutorial", "cutscene"):
+        if self.screen_name in ("tutorial", "cutscene", "puzzle"):
             try:
                 dt = self.clock.get_time()
             except Exception:
                 dt = 1000 // FPS
             if self.screen_name == "tutorial":
                 self.tutorial.update(dt)
+            elif self.screen_name == "puzzle":
+                if self.puzzle:
+                    self.puzzle.update(dt / 1000.0)
             elif self.cutscene:
                 if self.cutscene.update(dt / 1000.0):
                     self._cutscene_done()
+                else:
+                    self._speak_cutscene()
+
+    MOODS = {
+        "menu": "noir",
+        "case_select": "noir",
+        "customization": "noir",
+        "settings": "noir",
+        "tutorial": "noir",
+        "cutscene": "noir",
+        "map": "investigation",
+        "location": "investigation",
+        "dialogue": "investigation",
+        "notebook": "investigation",
+        "accusation": "tension",
+        "puzzle": "tension",
+    }
+
+    def _update_music(self):
+        """Подобрать музыку под экран: спокойно, расследование, напряжение."""
+        if self.screen_name == self._music_screen:
+            return
+        self._music_screen = self.screen_name
+        if self.screen_name == "ending":
+            resolution = ending_logic.resolve(self.current_case, self.state) if self.current_case else {}
+            self.audio.play_music("success" if resolution.get("success") else "failure")
+            return
+        mood = self.MOODS.get(self.screen_name, "noir")
+        self.audio.play_music(mood)
 
     def draw(self):
         # Letterbox рендер: рисуем всё на логический холст 1280×720, затем масштабируем
@@ -673,6 +746,8 @@ class Game:
                 self.draw_tutorial()
             elif self.screen_name == "cutscene":
                 self.draw_cutscene()
+            elif self.screen_name == "puzzle":
+                self.draw_puzzle()
             # на катсцене ничего не перекрывает кадр
             if self.screen_name != "cutscene":
                 # уведомления поверх всего
@@ -1137,10 +1212,35 @@ class Game:
             return False
         self.cutscene = CutscenePlayer(scene, self.LOGICAL_W, self.LOGICAL_H)
         self.screen_name = "cutscene"
+        self._cutscene_case = str(case_id or "tutorial")
+        # кадр не уходит раньше, чем закончится его озвучка
+        for i, frame in enumerate(scene.scenes):
+            seconds = self.audio.voice_length(f"cutscene_{self._cutscene_case}_{i + 1}")
+            if seconds:
+                frame.duration = max(frame.duration, seconds + 0.9)
+        self._cutscene_voice_index = -1
+        self._speak_cutscene()
         return True
+
+    def _speak_cutscene(self):
+        """Озвучка кадра катсцены (если для него есть файл в assets/voice)."""
+        player = self.cutscene
+        if not player:
+            return
+        index = player.index
+        if index == self._cutscene_voice_index:
+            return
+        self._cutscene_voice_index = index
+        self.audio.stop_voice()
+        scene = player.scene
+        if scene is None:
+            return
+        self.audio.play_voice(f"cutscene_{self._cutscene_case}_{index + 1}")
 
     def _cutscene_done(self):
         """Катсцена закончилась (досмотрена или пропущена)."""
+        self.audio.stop_voice()
+        self._cutscene_voice_index = -1
         if self.cutscene:
             self.cutscene.clear_cache()
         self.screen_name = "map" if self.current_case else "case_select"
@@ -1176,6 +1276,105 @@ class Game:
             self._cutscene_done()
             return
         draw_cutscene_screen(self.screen, self.cutscene)
+
+    # ── улики и головоломки ──────────────────────────────────────────
+
+    def collect_clue(self, clue):
+        """Забрать улику в блокнот (с уведомлениями, временем и звуком)."""
+        if clue["id"] in self.state.collected_clues:
+            return
+        self.state.collected_clues.add(clue["id"])
+        for _nid in clue.get("leads_to", []):
+            self.add_notification("Новая локация открыта!")
+        self.state.case_time_minutes += 10
+        self.audio.play_sfx("clue")
+        save_game(self.state)
+        self.add_notification(f"Улика собрана: {clue['title']}")
+
+    def open_puzzle(self, clue):
+        """Открыть головоломку, которая охраняет улику."""
+        spec = clue.get("puzzle")
+        if not spec:
+            self.collect_clue(clue)
+            return
+        self.puzzle = puzzles.Puzzle(spec, seed=str(clue.get("id", "")))
+        self.puzzle_clue = clue
+        self.puzzle_rects = {}
+        self._puzzle_started_at = time.time()
+        self.screen_name = "puzzle"
+        self.audio.play_music("tension")
+
+    def close_puzzle(self):
+        self.puzzle = None
+        self.puzzle_clue = None
+        self.puzzle_rects = {}
+        self.screen_name = "location"
+        self._music_screen = None
+
+    def finish_puzzle_flow(self):
+        """Нажали «Продолжить» после победы или провала."""
+        puzzle = self.puzzle
+        clue = self.puzzle_clue
+        if puzzle and puzzle.success and clue:
+            self.collect_clue(clue)
+        elif puzzle and puzzle.failed:
+            # попытка стоит времени, но не блокирует дело навсегда
+            self.state.case_time_minutes += 15
+            save_game(self.state)
+            self.add_notification("Замок не поддался. Можно вернуться позже.")
+        self.close_puzzle()
+
+    def submit_puzzle_code(self):
+        if not self.puzzle:
+            return
+        before = self.puzzle.success
+        self.puzzle.submit_code()
+        if self.puzzle.success and not before:
+            self.audio.play_sfx("success")
+        elif self.puzzle.failed:
+            self.audio.play_sfx("fail")
+        else:
+            self.audio.play_sfx("tick")
+
+    def strike_lockpick(self):
+        if not self.puzzle:
+            return
+        hit = self.puzzle.strike()
+        if self.puzzle.success:
+            self.audio.play_sfx("success")
+        elif self.puzzle.failed:
+            self.audio.play_sfx("fail")
+        else:
+            self.audio.play_sfx("dial" if hit else "tick")
+
+    def cut_wire(self, index: int):
+        if not self.puzzle:
+            return
+        self.audio.play_sfx("slide")
+        correct = self.puzzle.cut(index)
+        if correct:
+            self.audio.play_sfx("success")
+        elif self.puzzle.failed:
+            self.audio.play_sfx("fail")
+
+    def tap_shape(self, name: str):
+        if not self.puzzle:
+            return
+        result = self.puzzle.tap(name)
+        if result is None:
+            return
+        if self.puzzle.success:
+            self.audio.play_sfx("success")
+        elif self.puzzle.failed:
+            self.audio.play_sfx("fail")
+        else:
+            self.audio.play_sfx("page" if result else "tick")
+
+    def draw_puzzle(self):
+        if not self.puzzle:
+            self.close_puzzle()
+            return
+        draw_puzzle_screen(self)
 
     def _cutscene_replay_rect(self, layout) -> pygame.Rect:
         """Кнопка «КАК ВСЁ БЫЛО» в журнале карты (одна для отрисовки и кликов)."""
@@ -1529,21 +1728,19 @@ class Game:
                     COLOR_TEXT_DIM,
                     pygame.Rect(rect.x + 35, rect.y + 30, rect.w - 155, 34),
                 )
-                # кнопка собрать
+                # кнопка: с замком — «ВЗЛОМАТЬ», без — «ИЗУЧИТЬ»
                 if not collected:
-                    btn = Button((rect.right - 100, rect.y + 12, 85, 28), "ИЗУЧИТЬ", accent=True)
+                    locked = bool(clue.get("puzzle"))
+                    label = "ВЗЛОМАТЬ" if locked else "ИЗУЧИТЬ"
+                    btn = Button((rect.right - 100, rect.y + 12, 85, 28), label, accent=True)
                     btn.update(mouse, pressed)
                     btn.draw(self.screen, get_font(11, bold=True))
-                    if btn.clicked:
-                        pygame.time.wait(150)
-                        self.state.collected_clues.add(clue["id"])
-                        # разблокируем новые локации
-                        for nid in clue.get("leads_to", []):
-                            self.add_notification("Новая локация открыта!")
-                        # время +10 мин
-                        self.state.case_time_minutes += 10
-                        save_game(self.state)
-                        self.add_notification(f"Улика собрана: {clue['title']}")
+                    if btn.clicked and self._click_once():
+                        pygame.time.wait(120)
+                        if locked:
+                            self.open_puzzle(clue)
+                        else:
+                            self.collect_clue(clue)
                 else:
                     done = get_font(11).render("✓ ИЗУЧЕНО", True, COLOR_GREEN)
                     self.screen.blit(done, (rect.right - 90, rect.y + 18))
@@ -2548,6 +2745,7 @@ class Game:
             or self.sfx_slider.value != self.settings.get("sfx_volume", 0.7)
             or self.music_slider.value != self.settings.get("music_volume", 0.5)
             or self.auto_update_toggle.checked != self.settings.get("auto_check_updates", True)
+            or self.voice_toggle.checked != self.settings.get("voice_enabled", True)
         )
         # Индикатор изменений
         if has_changes:
@@ -2585,7 +2783,18 @@ class Game:
         ry += 50
         self.music_slider.rect = pygame.Rect(right.x + 20, ry + 18, right.w - 40, 12)
         self.music_slider.draw(self.screen, get_font(10))
+        self.audio.set_volumes(music=self.music_slider.value, sfx=self.sfx_slider.value)
         ry += 50
+        # Озвучка
+        self.voice_toggle.rect = pygame.Rect(right.x + 20, ry + 6, 44, 24)
+        self.voice_toggle.draw(self.screen, get_font(11))
+        voice_hint = font_small.render(
+            "Голос рассказчика в катсценах" if self.voice_toggle.checked else "Только субтитры, без голоса",
+            True,
+            COLOR_TEXT_DARK,
+        )
+        self.screen.blit(voice_hint, (right.x + 20, ry + 34))
+        ry += 58
         # Авто-обновления
         self.auto_update_toggle.rect = pygame.Rect(right.x + 20, ry + 6, 44, 24)
         self.auto_update_toggle.draw(self.screen, get_font(11))
