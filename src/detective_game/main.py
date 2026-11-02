@@ -7,7 +7,10 @@ import pygame
 
 from . import dialogue, get_version_source
 from . import endings as ending_logic
+from .case_cutscenes import cutscene_for
 from .config import *
+from .cutscene import CutscenePlayer, cutscene_button_rect
+from .cutscene import draw_cutscene as draw_cutscene_screen
 from .data import case_map, get_clue, get_location, list_cases, load_case
 from .game_state import AVATARS, BACKGROUNDS, DetectiveProfile, GameState
 from .save_system import (
@@ -182,7 +185,8 @@ class Game:
         if self.state.current_case_id:
             self.current_case = load_case(self.state.current_case_id)
         # UI state
-        self.screen_name = "menu"  # menu | customization | case_select | map | location | dialogue | notebook | accusation | ending | settings
+        self.screen_name = "menu"  # menu | customization | case_select | map | location | dialogue | notebook | accusation | ending | settings | cutscene
+        self.cutscene: CutscenePlayer | None = None
         self.prev_screen = "menu"
         self.selected_avatar = 0
         self.selected_bg = self.state.detective.background
@@ -500,6 +504,9 @@ class Game:
             if handle_tutorial_key(self, self.tutorial, event):
                 return
             return
+        if self.screen_name == "cutscene":
+            self.handle_cutscene_event(event)
+            return
         if self.screen_name == "dialogue" and self._dialogue_event(event):
             return
         # Глобально: дропдауны настроек — взаимоисключение и закрытие по клику в пустоту
@@ -573,6 +580,12 @@ class Game:
         elif self.screen_name == "map":
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.current_case:
                 layout = self._map_layout()
+                # повтор катсцены — та же кнопка, что рисуется в журнале
+                if self._cutscene_replay_rect(layout).collidepoint(event.pos):
+                    if cutscene_for(str(self.current_case.get("id", ""))):
+                        pygame.time.wait(120)
+                        self.play_cutscene()
+                    return
                 loc_id = layout.pin_at(event.pos)
                 # Пины ловятся в тех же точках, где нарисованы (раньше клик
                 # проверялся по сырым координатам дела и уходил мимо).
@@ -616,12 +629,16 @@ class Game:
         # обновление времени
         if self.state.case_state == "in_progress":
             self.state.total_playtime += 1 / FPS
-        if self.screen_name == "tutorial":
+        if self.screen_name in ("tutorial", "cutscene"):
             try:
                 dt = self.clock.get_time()
             except Exception:
                 dt = 1000 // FPS
-            self.tutorial.update(dt)
+            if self.screen_name == "tutorial":
+                self.tutorial.update(dt)
+            elif self.cutscene:
+                if self.cutscene.update(dt / 1000.0):
+                    self._cutscene_done()
 
     def draw(self):
         # Letterbox рендер: рисуем всё на логический холст 1280×720, затем масштабируем
@@ -654,10 +671,14 @@ class Game:
                 self.draw_settings()
             elif self.screen_name == "tutorial":
                 self.draw_tutorial()
-            # уведомления поверх всего
-            self.draw_notifications()
-            # проверка обновлений баннер
-            self.draw_update_banner()
+            elif self.screen_name == "cutscene":
+                self.draw_cutscene()
+            # на катсцене ничего не перекрывает кадр
+            if self.screen_name != "cutscene":
+                # уведомления поверх всего
+                self.draw_notifications()
+                # проверка обновлений баннер
+                self.draw_update_banner()
         finally:
             self.screen = real_screen
         # масштабирование letterbox на физический экран
@@ -1101,8 +1122,65 @@ class Game:
         self.state.trust_bonus_taken = set()
         save_game(self.state)
         self.location_id = "office"
-        self.screen_name = "map"
         self.add_notification(f"Дело «{case['title']}» начато. Удачи, {self.state.detective.name}!")
+        self.play_cutscene(case_id)
+
+    # ── катсцена ─────────────────────────────────────────────────────
+
+    def play_cutscene(self, case_id=None) -> bool:
+        """Запустить катсцену дела. False — если для дела её нет."""
+        case_id = case_id or (self.current_case or {}).get("id")
+        scene = cutscene_for(str(case_id or ""))
+        if not scene:
+            if self.screen_name == "cutscene":
+                self.screen_name = "map"
+            return False
+        self.cutscene = CutscenePlayer(scene, self.LOGICAL_W, self.LOGICAL_H)
+        self.screen_name = "cutscene"
+        return True
+
+    def _cutscene_done(self):
+        """Катсцена закончилась (досмотрена или пропущена)."""
+        if self.cutscene:
+            self.cutscene.clear_cache()
+        self.screen_name = "map" if self.current_case else "case_select"
+
+    def handle_cutscene_event(self, event) -> bool:
+        """Управление катсценой: дальше, пропустить, пауза."""
+        player = self.cutscene
+        if not player:
+            self._cutscene_done()
+            return True
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                player.skip()
+                self._cutscene_done()
+            elif event.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_RIGHT):
+                player.advance()
+                if player.finished:
+                    self._cutscene_done()
+            return True
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if cutscene_button_rect(self.LOGICAL_W, self.LOGICAL_H).collidepoint(event.pos):
+                player.skip()
+                self._cutscene_done()
+                return True
+            player.advance()
+            if player.finished:
+                self._cutscene_done()
+            return True
+        return False
+
+    def draw_cutscene(self):
+        if not self.cutscene:
+            self._cutscene_done()
+            return
+        draw_cutscene_screen(self.screen, self.cutscene)
+
+    def _cutscene_replay_rect(self, layout) -> pygame.Rect:
+        """Кнопка «КАК ВСЁ БЫЛО» в журнале карты (одна для отрисовки и кликов)."""
+        right = layout.right
+        return pygame.Rect(right.x + 15, layout.btn_menu.y - 82, right.w - 30, 26)
 
     def _map_layout(self):
         """Макет карты (общий для отрисовки и кликов) — логические координаты."""
@@ -1164,9 +1242,10 @@ class Game:
 
         # header
         draw_panel(self.screen, layout.header)
-        case_title = font_title.render(
-            f"ДЕЛО: {self.current_case['title'].upper()}", True, COLOR_ACCENT
-        )
+        # у туториала в названии уже есть слово «дело» — не дублируем
+        raw_title = self.current_case["title"].upper()
+        title_text = raw_title if "ДЕЛО" in raw_title else f"ДЕЛО: {raw_title}"
+        case_title = font_title.render(title_text, True, COLOR_ACCENT)
         self.screen.blit(case_title, (layout.header.x + 20, layout.header.y + 8))
         day_text = font_small.render(
             f"День {self.state.game_day} • Время: {9 + self.state.case_time_minutes // 60:02d}:{self.state.case_time_minutes % 60:02d} • Улик: {len(self.state.collected_clues)}/{len(self.current_case['clues'])} (нужно {ending_logic.required_clues(self.current_case)})",
@@ -1272,9 +1351,9 @@ class Game:
                 t = font_clue.render(clue["title"][:24], True, COLOR_TEXT)
                 self.screen.blit(t, (right.x + 40, y + 7))
                 y += 36
-                if y > layout.btn_menu.y - 40:
+                if y > layout.btn_menu.y - 124:
                     break
-        prog_rect = pygame.Rect(right.x + 15, layout.btn_menu.y - 26, right.w - 30, 8)
+        prog_rect = pygame.Rect(right.x + 15, layout.btn_menu.y - 106, right.w - 30, 8)
         pygame.draw.rect(self.screen, (40, 40, 50), prog_rect, border_radius=4)
         progress = len(self.state.collected_clues) / max(1, len(self.current_case["clues"]))
         pygame.draw.rect(
@@ -1287,6 +1366,21 @@ class Game:
             f"Прогресс расследования: {int(progress * 100)}%", True, COLOR_TEXT_DIM
         )
         self.screen.blit(prog_text, (right.x + 15, prog_rect.y - 15))
+
+        # повтор катсцены «как всё было»
+        has_cut = cutscene_for(str((self.current_case or {}).get("id", ""))) is not None
+        cut_rect = self._cutscene_replay_rect(layout)
+        btn_cut = Button(
+            cut_rect,
+            "▶ КАК ВСЁ БЫЛО",
+            enabled=has_cut,
+            tooltip="Посмотреть вступление дела ещё раз",
+        )
+        btn_cut.update(mouse, pressed)
+        btn_cut.draw(self.screen, get_font(10, bold=True))
+        if btn_cut.clicked and has_cut and self._click_once():
+            pygame.time.wait(120)
+            self.play_cutscene()
 
         btn_back2 = Button(layout.btn_menu, "← МЕНЮ")
         btn_save2 = Button(layout.btn_save, "СОХРАНИТЬ")
