@@ -18,8 +18,20 @@ from typing import Dict, List, Optional, Set
 DEFAULT_SECONDS = 60
 CLICK_RADIUS = 0.055
 DECOYS_PER_LOCATION = 2
-# патруль в больших делах: подсвеченный сектор нельзя трогать
-PATROL_CYCLE = 6.0
+# Патруль в больших делах: охранник обходит зал по маршруту-«змейке».
+# Активный сектор нельзя трогать, следующий подсвечивается заранее —
+# так это задача на планирование, а не на реакцию.
+PATROL_COLS = 3
+PATROL_ROWS = 2
+PATROL_STEP = 5.0
+# к концу обыска охранник ускоряется: времени на раздумья всё меньше
+PATROL_HURRY = 0.62
+PATROL_HURRY_BELOW = 0.35
+PATROL_MIN_STEP = 1.6
+# клик у самой границы сектора не считается «поймали»: рука дрогнула — не вина игрока
+PATROL_CLICK_INSET = 0.012
+# старое имя оставлено для совместимости с сохранениями и тестами
+PATROL_CYCLE = PATROL_STEP
 
 # что можно найти «не по делу» — атмосфера и потерянное время
 FLAVOUR = {
@@ -210,9 +222,93 @@ class Search:
         from . import pressure
 
         self.patrol_on = pressure.advanced(self.case)
+        self.patrol_route = self._route()
+        self.route_index = 0
+        self.step_elapsed = 0.0
+        self.patrol_moves = 0
         self.elapsed = 0.0
         self.caught = False
         self.misses = 0
+
+    # ── патруль ───────────────────────────────────────────────────
+    def _route(self) -> List[tuple]:
+        """Маршрут охранника: «змейка» по секторам, старт — от дела и локации.
+
+        Сектора идут рядами туда-обратно, поэтому переход всегда соседний:
+        охранник не телепортируется через зал.
+        """
+        route: List[tuple] = []
+        for row in range(PATROL_ROWS):
+            cols = range(PATROL_COLS) if row % 2 == 0 else reversed(range(PATROL_COLS))
+            route.extend((col, row) for col in cols)
+        if not route:
+            return [(0, 0)]
+        rng = random.Random(f"patrol:{self.case.get('id', '')}:{self.location_id}")
+        start = rng.randrange(len(route))
+        return route[start:] + route[:start]
+
+    def patrol_step_seconds(self) -> float:
+        """Сколько секунд охранник стоит в одном секторе."""
+        base = PATROL_STEP
+        total = max(1.0, float(self.seconds))
+        if self.remaining / total < PATROL_HURRY_BELOW:
+            base *= PATROL_HURRY
+        return max(PATROL_MIN_STEP, base)
+
+    def patrol_seconds_left(self) -> float:
+        """Сколько осталось до перехода в следующий сектор."""
+        if not self.patrol_on:
+            return 0.0
+        return max(0.0, self.patrol_step_seconds() - self.step_elapsed)
+
+    def patrol_cell(self) -> tuple:
+        """Сектор, в котором охранник стоит сейчас: ``(col, row)``."""
+        if not self.patrol_route:
+            return (0, 0)
+        return self.patrol_route[self.route_index % len(self.patrol_route)]
+
+    def patrol_next_cell(self) -> tuple:
+        """Куда патруль пойдёт на следующем шаге."""
+        if not self.patrol_route:
+            return (0, 0)
+        return self.patrol_route[(self.route_index + 1) % len(self.patrol_route)]
+
+    def _cell_rect(self, cell: tuple) -> tuple:
+        col, row = cell
+        return (
+            col / PATROL_COLS,
+            row / PATROL_ROWS,
+            1.0 / PATROL_COLS,
+            1.0 / PATROL_ROWS,
+        )
+
+    def patrol_rect(self) -> tuple:
+        """Сектор в долях картинки: ``(x, y, w, h)``."""
+        return self._cell_rect(self.patrol_cell())
+
+    def patrol_next_rect(self) -> tuple:
+        return self._cell_rect(self.patrol_next_cell())
+
+    def step_patrol(self) -> None:
+        """Один шаг охранника (вынесено ради тестов и предпросмотра)."""
+        if not self.patrol_route:
+            return
+        self.route_index = (self.route_index + 1) % len(self.patrol_route)
+        self.patrol_moves += 1
+
+    def in_patrol(self, x: float, y: float, inset: float = 0.0) -> bool:
+        """Попадает ли точка в активный сектор патруля.
+
+        ``inset`` сужает сектор: для клика берём небольшой отступ, чтобы
+        промах на пару пикселей у границы не прерывал обыск.
+        """
+        if not self.patrol_on:
+            return False
+        px, py, pw, ph = self.patrol_rect()
+        return (
+            px + inset <= x < px + pw - inset
+            and py + inset <= y < py + ph - inset
+        )
 
     @property
     def total(self) -> int:
@@ -236,25 +332,16 @@ class Search:
         step = max(0.0, float(dt or 0.0))
         self.elapsed += step
         self.remaining = max(0.0, self.remaining - step)
+        if self.patrol_on and step:
+            self.step_elapsed += step
+            # шагов за кадр может быть несколько (низкий FPS), поэтому while
+            limit = 0
+            while self.step_elapsed >= self.patrol_step_seconds() and limit < 64:
+                self.step_elapsed -= self.patrol_step_seconds()
+                self.step_patrol()
+                limit += 1
         if self.remaining <= 0.0:
             self.expired = True
-
-    # ── патруль ───────────────────────────────────────────────────
-    def patrol_cell(self) -> tuple:
-        """Литой сектор 2×2, в котором сейчас ходит охранник."""
-        step = int(self.elapsed // PATROL_CYCLE) % 4
-        return step % 2, step // 2
-
-    def patrol_rect(self) -> tuple:
-        """Сектор в долях картинки: ``(x, y, w, h)``."""
-        col, row = self.patrol_cell()
-        return (col * 0.5, row * 0.5, 0.5, 0.5)
-
-    def in_patrol(self, x: float, y: float) -> bool:
-        if not self.patrol_on:
-            return False
-        px, py, pw, ph = self.patrol_rect()
-        return px <= x < px + pw and py <= y < py + ph
 
     def miss(self) -> int:
         """Пустой клик: в больших делах стоит времени."""
@@ -293,12 +380,25 @@ class Search:
             self._state.hidden_found = hidden
         return spot
 
+    def caught_by_click(self, x: float, y: float) -> bool:
+        """Клик считается нарушением, если он не на самой кромке сектора."""
+        return self.in_patrol(x, y, inset=PATROL_CLICK_INSET)
+
+    @property
+    def patrol_alert(self) -> bool:
+        """Патруль вот-вот шагнёт: интерфейс показывает стрелку и счётчик."""
+        return bool(self.patrol_on) and self.patrol_seconds_left() <= 1.5
+
     def skip(self) -> None:
         """Закончить обыск (ушли или время вышло)."""
         self.expired = True
 
 
 __all__ = [
+    "PATROL_COLS",
+    "PATROL_ROWS",
+    "PATROL_CLICK_INSET",
+    "PATROL_STEP",
     "CLICK_RADIUS",
     "DEFAULT_SECONDS",
     "Search",

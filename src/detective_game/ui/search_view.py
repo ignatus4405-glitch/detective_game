@@ -78,6 +78,58 @@ def _spot_center(visual: pygame.Rect, spot) -> tuple:
     )
 
 
+def _cell_rect(visual: pygame.Rect, cell: tuple) -> pygame.Rect:
+    """Сектор патруля (доли картинки) в экранных координатах."""
+    x, y, w, h = cell
+    return pygame.Rect(
+        visual.x + int(x * visual.w),
+        visual.y + int(y * visual.h),
+        max(2, int(w * visual.w)),
+        max(2, int(h * visual.h)),
+    )
+
+
+def _dashed_border(surface, rect, color, width=2, dash=10, gap=6) -> None:
+    """Пунктирная рамка: «сюда идёт патруль»."""
+    for x in range(rect.x, rect.right, dash + gap):
+        pygame.draw.line(surface, color, (x, rect.y), (min(rect.right, x + dash), rect.y), width)
+        pygame.draw.line(
+            surface, color, (x, rect.bottom - width), (min(rect.right, x + dash), rect.bottom), width
+        )
+    for y in range(rect.y, rect.bottom, dash + gap):
+        pygame.draw.line(surface, color, (rect.x, y), (rect.x, min(rect.bottom, y + dash)), width)
+        pygame.draw.line(
+            surface, color, (rect.right - width, y), (rect.right, min(rect.bottom, y + dash)), width
+        )
+
+
+def draw_patrol(game, surface, visual: pygame.Rect) -> None:
+    """Активный сектор патруля, предупреждение о следующем и счётчик."""
+    session = getattr(game, "search", None)
+    if not session or not getattr(session, "patrol_on", False):
+        return
+    zone = _cell_rect(visual, session.patrol_rect())
+    shade = pygame.Surface((zone.w, zone.h), pygame.SRCALPHA)
+    shade.fill((190, 60, 60, 46 if not session.patrol_alert else 70))
+    surface.blit(shade, zone.topleft)
+    pygame.draw.rect(surface, (210, 90, 90), zone, width=2, border_radius=6)
+    warn = get_font(10, bold=True).render("ПАТРУЛЬ", True, (240, 190, 190))
+    chip = pygame.Rect(zone.x + 10, zone.y + 10, warn.get_width() + 14, 18)
+    pygame.draw.rect(surface, (40, 16, 16), chip, border_radius=8)
+    surface.blit(warn, (chip.x + 7, chip.y + 3))
+    # следующий сектор: пунктир и обратный отсчёт — можно успеть переждать
+    ahead = _cell_rect(visual, session.patrol_next_rect())
+    left = session.patrol_seconds_left()
+    hot = session.patrol_alert
+    _dashed_border(surface, ahead, (235, 180, 90) if hot else (180, 150, 90), width=2)
+    text = f"СЮДА ЧЕРЕЗ {max(0, int(round(left)))}с"
+    label = get_font(9, bold=True).render(text, True, (250, 220, 150) if hot else (200, 180, 130))
+    tag = pygame.Rect(ahead.x + 8, ahead.bottom - 24, label.get_width() + 12, 17)
+    tag.clamp_ip(visual)
+    pygame.draw.rect(surface, (24, 20, 12), tag, border_radius=8)
+    surface.blit(label, (tag.x + 6, tag.y + 3))
+
+
 def draw_overlay(game, visual: pygame.Rect) -> None:
     """Хотспоты, таймер и кнопка «ЗАКОНЧИТЬ» поверх иллюстрации локации."""
     session = getattr(game, "search", None)
@@ -85,23 +137,7 @@ def draw_overlay(game, visual: pygame.Rect) -> None:
         return
     surface = game.screen
     game.search_visual = pygame.Rect(visual)
-    # сектор, который сейчас проходит патруль
-    if getattr(session, "patrol_on", False):
-        px, py, pw, ph = session.patrol_rect()
-        zone = pygame.Rect(
-            visual.x + int(px * visual.w),
-            visual.y + int(py * visual.h),
-            int(pw * visual.w),
-            int(ph * visual.h),
-        )
-        shade = pygame.Surface((zone.w, zone.h), pygame.SRCALPHA)
-        shade.fill((190, 60, 60, 46))
-        surface.blit(shade, zone.topleft)
-        pygame.draw.rect(surface, (210, 90, 90), zone, width=2, border_radius=6)
-        warn = get_font(10, bold=True).render("ПАТРУЛЬ", True, (240, 190, 190))
-        chip = pygame.Rect(zone.x + 10, zone.y + 10, warn.get_width() + 14, 18)
-        pygame.draw.rect(surface, (40, 16, 16), chip, border_radius=8)
-        surface.blit(warn, (chip.x + 7, chip.y + 3))
+    draw_patrol(game, surface, visual)
     # рамка обыска
     pygame.draw.rect(surface, COLOR_ACCENT, visual, width=2, border_radius=8)
     mouse = game._to_logical(pygame.mouse.get_pos())
@@ -120,7 +156,7 @@ def draw_overlay(game, visual: pygame.Rect) -> None:
         pygame.draw.circle(surface, (60, 60, 70), (cx, cy), radius, 2)
         pygame.draw.circle(surface, (18, 18, 24), (cx, cy), max(2, radius // 3))
         if pygame.Rect(cx - radius, cy - radius, radius * 2, radius * 2).collidepoint(mouse):
-            guarded = getattr(session, "patrol_on", False) and session.in_patrol(
+            guarded = getattr(session, "patrol_on", False) and session.caught_by_click(
                 spot["x"], spot["y"]
             )
             if guarded:
@@ -146,6 +182,12 @@ def draw_overlay(game, visual: pygame.Rect) -> None:
     pygame.draw.rect(surface, COLOR_BORDER, bar, width=1, border_radius=6)
     label = get_font(11, bold=True).render(f"ОБЫСК  •  {title_text(session)}", True, COLOR_TEXT)
     surface.blit(label, (bar.x + 10, bar.y + 8))
+    if getattr(session, "patrol_on", False):
+        patrol_left = int(round(session.patrol_seconds_left()))
+        patrol = get_font(9, bold=True).render(
+            f"ПАТРУЛЬ: {patrol_left}с", True, (235, 170, 120)
+        )
+        surface.blit(patrol, (bar.x + label.get_width() + 24, bar.y + 10))
     timer_col = COLOR_GREEN if seconds > 20 else (COLOR_ACCENT if seconds > 10 else (210, 90, 90))
     timer = get_font(12, bold=True).render(f"{seconds // 60}:{seconds % 60:02d}", True, timer_col)
     surface.blit(timer, (bar.right - timer.get_width() - 10, bar.y + 7))
@@ -184,7 +226,7 @@ def handle_click(game, pos) -> bool:
         return False
     x = (pos[0] - visual.x) / max(1, visual.w)
     y = (pos[1] - visual.y) / max(1, visual.h)
-    if getattr(session, "patrol_on", False) and session.in_patrol(x, y):
+    if getattr(session, "patrol_on", False) and session.caught_by_click(x, y):
         session.caught = True
         session.skip()
         game.search_message = "Патруль заметил вас — обыск прерван."
@@ -248,6 +290,7 @@ def handle_start_click(game, pos) -> bool:
 __all__ = [
     "button_rect",
     "draw_overlay",
+    "draw_patrol",
     "draw_start_button",
     "handle_click",
     "handle_start_click",

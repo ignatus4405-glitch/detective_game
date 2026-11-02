@@ -577,7 +577,8 @@ def test_empty_search_click_costs_time_in_advanced_case(game):
     game.draw()
     session = game.search
     before = game.state.case_time_minutes
-    # правый нижний угол: вне точек и вне первого сектора патруля
+    # правый нижний угол пуст; патруль уводим в левый верхний сектор
+    session.route_index = session.patrol_route.index((0, 0))
     visual = game.search_rects["visual"]
     search_view.handle_click(game, (visual.right - 3, visual.bottom - 3))
     assert game.state.case_time_minutes == before + 2
