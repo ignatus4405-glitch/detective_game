@@ -106,6 +106,26 @@ class GameState:
     warrant: bool = False
     # редкое QTE «драка в баре» уже случилось в этом деле
     fight_done: bool = False
+    # ── «взрослые» правила (дела с advanced: true) ──────────────────
+    # какие темы допроса уже открывались: "персонаж:тема"
+    asked_topics: set = field(default_factory=set)
+    # улики, подтверждённые лабораторией, и подброшенные (фальшивки)
+    confirmed_clues: set = field(default_factory=set)
+    fake_clues: set = field(default_factory=set)
+    # выводы, полученные сопоставлением показаний
+    deductions: set = field(default_factory=set)
+    # выбор игрока на суде: мотив и способ
+    trial_motive: Optional[str] = None
+    trial_method: Optional[str] = None
+    # срок дела истёк
+    deadline_missed: bool = False
+    # сколько анонимных звонков уже было
+    calls_seen: int = 0
+    # проваленные слежки и день, до которого объект осторожен
+    tail_failed: set = field(default_factory=set)
+    tail_blocked_until_day: int = 0
+    # персонажи, замолчавшие до определённого дня: char_id -> день
+    silenced: dict = field(default_factory=dict)
     # meta
     total_playtime: float = 0.0
 
@@ -124,6 +144,12 @@ class GameState:
         d["hidden_found"] = list(self.hidden_found)
         d["tail_done"] = list(self.tail_done)
         d["exposed_lies"] = dict(self.exposed_lies)
+        d["asked_topics"] = list(self.asked_topics)
+        d["confirmed_clues"] = list(self.confirmed_clues)
+        d["fake_clues"] = list(self.fake_clues)
+        d["deductions"] = list(self.deductions)
+        d["tail_failed"] = list(self.tail_failed)
+        d["silenced"] = dict(self.silenced)
         # dataclass nested
         return d
 
@@ -162,6 +188,17 @@ class GameState:
             money=int(data.get("money", 500) or 0),
             warrant=bool(data.get("warrant", False)),
             fight_done=bool(data.get("fight_done", False)),
+            asked_topics=set(data.get("asked_topics", []) or []),
+            confirmed_clues=set(data.get("confirmed_clues", []) or []),
+            fake_clues=set(data.get("fake_clues", []) or []),
+            deductions=set(data.get("deductions", []) or []),
+            trial_motive=data.get("trial_motive"),
+            trial_method=data.get("trial_method"),
+            deadline_missed=bool(data.get("deadline_missed", False)),
+            calls_seen=int(data.get("calls_seen", 0) or 0),
+            tail_failed=set(data.get("tail_failed", []) or []),
+            tail_blocked_until_day=int(data.get("tail_blocked_until_day", 0) or 0),
+            silenced={str(k): int(v) for k, v in (data.get("silenced", {}) or {}).items()},
             total_playtime=data.get("total_playtime", 0.0),
         )
         return obj

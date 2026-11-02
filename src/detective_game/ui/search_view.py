@@ -81,6 +81,23 @@ def draw_overlay(game, visual: pygame.Rect) -> None:
         return
     surface = game.screen
     game.search_visual = pygame.Rect(visual)
+    # сектор, который сейчас проходит патруль
+    if getattr(session, "patrol_on", False):
+        px, py, pw, ph = session.patrol_rect()
+        zone = pygame.Rect(
+            visual.x + int(px * visual.w),
+            visual.y + int(py * visual.h),
+            int(pw * visual.w),
+            int(ph * visual.h),
+        )
+        shade = pygame.Surface((zone.w, zone.h), pygame.SRCALPHA)
+        shade.fill((190, 60, 60, 46))
+        surface.blit(shade, zone.topleft)
+        pygame.draw.rect(surface, (210, 90, 90), zone, width=2, border_radius=6)
+        warn = get_font(10, bold=True).render("ПАТРУЛЬ", True, (240, 190, 190))
+        chip = pygame.Rect(zone.x + 10, zone.y + 10, warn.get_width() + 14, 18)
+        pygame.draw.rect(surface, (40, 16, 16), chip, border_radius=8)
+        surface.blit(warn, (chip.x + 7, chip.y + 3))
     # рамка обыска
     pygame.draw.rect(surface, COLOR_ACCENT, visual, width=2, border_radius=8)
     mouse = game._to_logical(pygame.mouse.get_pos())
@@ -153,9 +170,18 @@ def handle_click(game, pos) -> bool:
         return False
     x = (pos[0] - visual.x) / max(1, visual.w)
     y = (pos[1] - visual.y) / max(1, visual.h)
+    if getattr(session, "patrol_on", False) and session.in_patrol(x, y):
+        session.caught = True
+        session.skip()
+        game.search_message = "Патруль заметил вас — обыск прерван."
+        game.audio.play_sfx("fail")
+        return True
     spot = session.at(x, y)
     if not spot:
-        game.search_message = "Здесь пусто."
+        minutes = session.miss()
+        game.search_message = (
+            f"Здесь пусто. −{minutes} мин." if minutes else "Здесь пусто."
+        )
         game.audio.play_sfx("tick")
         return True
     taken = session.take(spot)

@@ -479,3 +479,174 @@ def test_qte_failure_costs_time(game):
     game.update((640, 360), False)
     assert game.state.case_time_minutes == before + 20
     assert game.state.reputation == 0
+
+
+# ── «взрослые» правила: экспертиза, показания, суд, патруль, срок ────
+
+
+def _press(game, monkeypatch, pos):
+    monkeypatch.setattr(pygame.mouse, "get_pos", lambda: pos)
+    monkeypatch.setattr(pygame.mouse, "get_pressed", lambda: (True, False, False))
+    monkeypatch.setattr(game, "_click_once", lambda: True)
+
+
+def test_expertise_button_confirms_hearsay(game, monkeypatch):
+    from detective_game import expertise
+    from detective_game.data import get_clue
+
+    case = _setup(game, case_id="bank_heist", clues=["clue_coffee"])
+    game.state.reputation = 2
+    game.state.money = 200
+    game.screen_name = "notebook"
+    game.notebook_tab = "clues"
+    game.draw()
+    rect = game.expertise_rects["clue_coffee"]
+    _press(game, monkeypatch, rect.center)
+    game.draw()
+    assert "clue_coffee" in game.state.confirmed_clues
+    assert game.state.money == 200 - 50
+    assert expertise.counts_in_court(case, game.state, get_clue(case, "clue_coffee"))
+
+
+def test_testimony_screen_finds_contradiction(game):
+    from detective_game import testimony
+    from detective_game.ui import testimony_view
+
+    case = _setup(game)
+    item = testimony.contradictions(case)[0]
+    game.state.asked_topics = {item["a"], item["b"]}
+    game.screen_name = "notebook"
+    game.notebook_tab = "board"
+    game.draw()
+    _click(game, game.board_rects["testimony"].center)
+    assert game.screen_name == "testimony"
+    game.draw()
+    assert item["a"] in game.testimony_rects["rows"]
+    testimony_view.handle_testimony_click(game, game.testimony_rects["rows"][item["a"]].center)
+    testimony_view.handle_testimony_click(game, game.testimony_rects["rows"][item["b"]].center)
+    assert len(game.testimony_selected) == 2
+    _click(game, game.testimony_rects["compare"].center)
+    assert item["id"] in game.state.deductions
+    assert game.state.reputation >= 1
+
+
+def test_trial_chips_required_before_accusation(game, monkeypatch):
+    from detective_game import trial
+
+    case = _setup(game)
+    game.screen_name = "accusation"
+    game.accusation_selected = "finch"
+    game.draw()
+    assert game.trial_rects["motive"]
+    assert game.trial_rects["method"]
+    assert trial.ready(case, game.state) is False
+    motive_id = trial.answers(case, "finch")["motive"]
+    method_id = trial.answers(case, "finch")["method"]
+    _press(game, monkeypatch, game.trial_rects["motive"][motive_id].center)
+    game.draw()
+    _press(game, monkeypatch, game.trial_rects["method"][method_id].center)
+    game.draw()
+    assert game.state.trial_motive == motive_id
+    assert game.state.trial_method == method_id
+    assert trial.ready(case, game.state) is True
+
+
+def test_search_patrol_catches_player(game):
+    case = _setup(game)
+    game.location_id = "warehouse"
+    game.screen_name = "location"
+    game.search = search.Search(case, "warehouse", game.state)
+    game.draw()
+    session = game.search
+    assert session.patrol_on is True
+    visual = game.search_rects["visual"]
+    px, py, pw, ph = session.patrol_rect()
+    pos = (
+        int(visual.x + (px + pw / 2) * visual.w),
+        int(visual.y + (py + ph / 2) * visual.h),
+    )
+    search_view.handle_click(game, pos)
+    assert session.caught is True
+
+
+def test_empty_search_click_costs_time_in_advanced_case(game):
+    case = _setup(game)
+    game.location_id = "warehouse"
+    game.screen_name = "location"
+    game.search = search.Search(case, "warehouse", game.state)
+    game.draw()
+    session = game.search
+    before = game.state.case_time_minutes
+    # правый нижний угол: вне точек и вне первого сектора патруля
+    visual = game.search_rects["visual"]
+    search_view.handle_click(game, (visual.right - 3, visual.bottom - 3))
+    assert game.state.case_time_minutes == before + 2
+    assert session.misses == 1
+
+
+def test_dialogue_timeout_costs_trust(game):
+    from detective_game import dialogue
+
+    case = _setup(game)
+    elena = next(c for c in case["characters"] if c["id"] == "elena")
+    interactive = next(
+        i for i, topic in enumerate(elena["dialogue"]) if dialogue.is_interactive(topic)
+    )
+    game.dialogue_char = elena
+    game.dialogue_idx = interactive
+    game.screen_name = "dialogue"
+    game.state.asked_topics.add(f"elena:{interactive}")
+    game.dialogue_timer = 0.1
+    game._update_dialogue_timer(0.5)
+    assert dialogue.declined(game.state, "elena", interactive)
+    assert dialogue.trust_of(game.state, "elena") == -1
+    assert game.dialogue_timer == 0
+
+
+def test_harsh_reply_silences_character(game):
+    from detective_game import dialogue
+
+    case = _setup(game)
+    elena = next(c for c in case["characters"] if c["id"] == "elena")
+    index, option, harsh = None, None, None
+    for i, topic in enumerate(elena["dialogue"]):
+        for j, opt in enumerate(dialogue.options(topic)):
+            if int(opt.get("trust", 0) or 0) < 0:
+                index, option, harsh = i, j, opt
+                break
+        if harsh:
+            break
+    if harsh is None:
+        pytest.skip("у Елены нет жёстких реплик")
+    game.state.trust["elena"] = 0
+    result = dialogue.choose(game.state, elena, index, option)
+    assert result["trust_delta"] < 0
+    assert dialogue.is_silent(game.state, "elena")
+
+
+def test_deadline_missed_marks_state(game):
+    from detective_game import pressure
+
+    case = _setup(game)
+    game.state.case_time_minutes = pressure.deadline_minutes(case) + 1
+    game.screen_name = "map"
+    game.update((0, 0), False)
+    assert game.state.deadline_missed is True
+    assert any("Срок" in text for text, _ in game.notifications)
+
+
+def test_repeat_topic_penalty_once_per_visit(game):
+    from detective_game import dialogue
+
+    case = _setup(game)
+    elena = next(c for c in case["characters"] if c["id"] == "elena")
+    game.state.asked_topics.add("elena:0")
+    game.dialogue_char = elena
+    game.dialogue_idx = 0
+    game.dialogue_penalized = False
+    game._dialogue_enter(elena)
+    assert dialogue.trust_of(game.state, "elena") == -1
+    game.dialogue_idx = 1
+    game.state.asked_topics.add("elena:1")
+    game._dialogue_enter(elena)
+    assert dialogue.trust_of(game.state, "elena") == -1
