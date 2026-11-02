@@ -6,6 +6,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.19] — 2026-11-02
+
+### Added
+- **Автозапуск после обновления:** игра теперь автоматически перезапускается после установки обновления. Инсталлятор получил чекбокс «Запустить» включённым по умолчанию и вторую запись `[Run]` с `Check: ShouldAutoLaunch` (срабатывает при `/SILENT` или `/AUTOLAUNCH=1`). `updater.run_installer` теперь запускает `Setup.exe /SILENT /CLOSEAPPLICATIONS /AUTOLAUNCH=1` через временный helper-bat (ожидание закрытия игры, логирование в `%TEMP%\blackville_update.log`, fallback запуск из реестра/Program Files).
+
+### Fixed
+- **Обновление из игры:** кнопки «▶ Установить» в настройках и баннерах теперь вызывают `run_installer(..., silent=True, autolaunch=True)` с уведомлением «установка… игра перезапустится автоматически» и корректным `pygame.quit() → sys.exit`.
+
+
 ## [0.1.18] — 2026-11-02
 
 ### Fixed
@@ -156,7 +165,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.18...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.19...HEAD
+[0.1.19]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.18...v0.1.19
 [0.1.18]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.17...v0.1.18
 [0.1.17]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.15...v0.1.16
