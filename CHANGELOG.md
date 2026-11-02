@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.22] — 2026-11-02
+
+### Fixed
+- **Коренной фикс `Failed to load Python DLL _MEI/.../python311.dll`:** сборка переведена с PyInstaller `--onefile` (распаковка в `%TEMP%/_MEI*`, уязвима к антивирусу/блокировке) на `--onedir` (все DLL рядом с exe, без временной папки). Инсталлятор теперь ставит папку `DetectiveBlackville/` целиком (`recursesubdirs`). Добавлена развёрнутая диагностика в `launcher.py` (подсказка про VC++ Redist и исключения антивируса).
+
 ## [0.1.21] — 2026-11-02
 
 ### Fixed
@@ -175,7 +180,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.21...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.22...HEAD
+[0.1.22]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.21...v0.1.22
 [0.1.21]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.20...v0.1.21
 [0.1.20]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.19...v0.1.20
 [0.1.19]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.18...v0.1.19

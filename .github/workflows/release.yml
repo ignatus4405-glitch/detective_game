@@ -60,7 +60,7 @@ jobs:
 
       - name: Build exe (fixed launcher)
         run: |
-          pyinstaller --name DetectiveBlackville --onefile --windowed --clean --noconfirm `
+          pyinstaller --name DetectiveBlackville --onedir --windowed --clean --noconfirm `
             --paths src `
             --hidden-import detective_game `
             --hidden-import detective_game.main `
@@ -113,8 +113,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Continue"
           python tools/make_readme.py
-          if (Test-Path dist/DetectiveBlackville.exe) {
-            $hash = (Get-FileHash dist/DetectiveBlackville.exe -Algorithm SHA256).Hash
+          $exePath = if (Test-Path dist/DetectiveBlackville/DetectiveBlackville.exe) { "dist/DetectiveBlackville/DetectiveBlackville.exe" } elseif (Test-Path dist/DetectiveBlackville.exe) { "dist/DetectiveBlackville.exe" } else { $null }
+          if ($exePath -and (Test-Path $exePath)) {
+            $hash = (Get-FileHash $exePath -Algorithm SHA256).Hash
             "SHA256: $hash  DetectiveBlackville.exe" | Out-File -Encoding utf8 dist/SHA256SUMS.txt
             Write-Host "SHA256: $hash"
           } else {
@@ -126,13 +127,21 @@ jobs:
           if (Test-Path dist/README.txt) { Write-Host "README.txt ready" }
           dir dist
 
-      - name: Zip artifacts
+      - name: Zip artifacts (onedir)
         run: |
           $ErrorActionPreference = "Continue"
-          $files1 = @("dist/DetectiveBlackville.exe") | Where-Object { Test-Path $_ }
-          Compress-Archive -Path $files1 -DestinationPath DetectiveBlackville-Windows.zip -Force
-          $files2 = @("dist/DetectiveBlackville.exe", "dist/latest.json", "dist/SHA256SUMS.txt", "dist/README.txt") | Where-Object { Test-Path $_ }
-          Compress-Archive -Path $files2 -DestinationPath DetectiveBlackville-Full.zip -Force
+          if (Test-Path dist/DetectiveBlackville) {
+            if (Test-Path dist/latest.json) { Copy-Item dist/latest.json dist/DetectiveBlackville/ -Force }
+            if (Test-Path dist/SHA256SUMS.txt) { Copy-Item dist/SHA256SUMS.txt dist/DetectiveBlackville/ -Force }
+            if (Test-Path dist/README.txt) { Copy-Item dist/README.txt dist/DetectiveBlackville/ -Force }
+            Compress-Archive -Path dist/DetectiveBlackville -DestinationPath DetectiveBlackville-Windows.zip -Force
+            Compress-Archive -Path dist/DetectiveBlackville -DestinationPath DetectiveBlackville-Full.zip -Force
+          } else {
+            $files1 = @("dist/DetectiveBlackville.exe") | Where-Object { Test-Path $_ }
+            Compress-Archive -Path $files1 -DestinationPath DetectiveBlackville-Windows.zip -Force
+            $files2 = @("dist/DetectiveBlackville.exe", "dist/latest.json", "dist/SHA256SUMS.txt", "dist/README.txt") | Where-Object { Test-Path $_ }
+            Compress-Archive -Path $files2 -DestinationPath DetectiveBlackville-Full.zip -Force
+          }
           dir *.zip
 
       - name: Install Inno Setup

@@ -12,7 +12,7 @@
   #define VERSION GetEnv("VERSION")
 #endif
 #if VERSION == ""
-  #define VERSION "0.1.21"
+  #define VERSION "0.1.22"
 #endif
 #define MyAppVersion VERSION
 #define MyAppExe "DetectiveBlackville.exe"
@@ -64,8 +64,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "quicklaunchicon"; Description: "Закрепить на панели задач"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 0,0
 
 [Files]
-; Основной exe — onefile сборка
-Source: "..\dist\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion sign
+; Основной exe — onedir сборка (фикс Failed to load Python DLL _MEI): весь каталог рядом с exe
+Source: "..\dist\DetectiveBlackville\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Совместимость с onefile (если сборка старая — один exe в dist)
+Source: "..\dist\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 ; Доп. файлы если есть
 Source: "..\dist\README.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme skipifsourcedoesntexist
 Source: "..\dist\latest.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist

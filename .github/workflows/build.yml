@@ -42,9 +42,9 @@ jobs:
       - name: Generate version info
         run: python tools/generate_version_info.py
 
-      - name: Build exe with PyInstaller (fixed launcher)
+      - name: Build exe with PyInstaller (fixed launcher) — onedir (фикс python DLL в Temp/_MEI)
         run: |
-          pyinstaller --name DetectiveBlackville --onefile --windowed --clean --noconfirm `
+          pyinstaller --name DetectiveBlackville --onedir --windowed --clean --noconfirm `
             --paths src `
             --hidden-import detective_game `
             --hidden-import detective_game.main `
@@ -63,15 +63,16 @@ jobs:
             --manifest build_app.manifest `
             launcher.py
           dir dist
-          if (-not (Test-Path dist/DetectiveBlackville.exe)) { throw "Build failed" }
+          if (-not (Test-Path dist/DetectiveBlackville/DetectiveBlackville.exe)) { if (Test-Path dist/DetectiveBlackville.exe) { Copy-Item dist/DetectiveBlackville.exe dist/DetectiveBlackville -Force } else { throw "Build failed: exe not found in dist/" }}
 
       - name: Generate README and hashes
         continue-on-error: true
         run: |
           $ErrorActionPreference = "Continue"
           python tools/make_readme.py
-          if (Test-Path dist/DetectiveBlackville.exe) {
-            $hash = (Get-FileHash dist/DetectiveBlackville.exe -Algorithm SHA256).Hash
+          $exePath = if (Test-Path dist/DetectiveBlackville/DetectiveBlackville.exe) { "dist/DetectiveBlackville/DetectiveBlackville.exe" } elseif (Test-Path dist/DetectiveBlackville.exe) { "dist/DetectiveBlackville.exe" } else { $null }
+          if ($exePath -and (Test-Path $exePath)) {
+            $hash = (Get-FileHash $exePath -Algorithm SHA256).Hash
             "SHA256: $hash  DetectiveBlackville.exe" | Out-File -Encoding utf8 dist/SHA256SUMS.txt
             Write-Host "SHA256: $hash"
           } else {
@@ -96,12 +97,20 @@ jobs:
           EOF
           cat dist/latest.json
 
-      - name: Zip artifact
+      - name: Zip artifact (onedir)
         run: |
           $ErrorActionPreference = "Continue"
-          $files = @("dist/DetectiveBlackville.exe", "dist/latest.json", "dist/SHA256SUMS.txt", "dist/README.txt") | Where-Object { Test-Path $_ }
-          if ($files.Count -eq 0) { throw "No files to zip" }
-          Compress-Archive -Path $files -DestinationPath DetectiveBlackville-Windows.zip -Force
+          if (Test-Path dist/DetectiveBlackville) {
+            # onedir — пакуем папку целиком + доп файлы
+            if (Test-Path dist/latest.json) { Copy-Item dist/latest.json dist/DetectiveBlackville/ -Force }
+            if (Test-Path dist/SHA256SUMS.txt) { Copy-Item dist/SHA256SUMS.txt dist/DetectiveBlackville/ -Force }
+            if (Test-Path dist/README.txt) { Copy-Item dist/README.txt dist/DetectiveBlackville/ -Force }
+            Compress-Archive -Path dist/DetectiveBlackville -DestinationPath DetectiveBlackville-Windows.zip -Force
+          } else {
+            $files = @("dist/DetectiveBlackville.exe", "dist/latest.json", "dist/SHA256SUMS.txt", "dist/README.txt") | Where-Object { Test-Path $_ }
+            if ($files.Count -eq 0) { throw "No files to zip" }
+            Compress-Archive -Path $files -DestinationPath DetectiveBlackville-Windows.zip -Force
+          }
           dir DetectiveBlackville-Windows.zip
 
       - name: Install Inno Setup
