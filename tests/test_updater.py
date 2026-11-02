@@ -89,19 +89,22 @@ def test_check_for_updates_detects_newer(monkeypatch):
 
 
 def test_installer_args_target_current_folder():
+    target = Path("C:/Games/Blackville")
+    log_path = Path("C:/Temp/update.log")
     args = updater.build_installer_args(
         Path("setup.exe"),
         silent=True,
         autolaunch=True,
-        install_dir=Path("C:/Games/Blackville"),
-        log_path=Path("C:/Temp/update.log"),
+        install_dir=target,
+        log_path=log_path,
     )
     assert "/SILENT" in args
     assert "/CLOSEAPPLICATIONS" in args
     assert "/NORESTART" in args
     assert "/AUTOLAUNCH=1" in args
-    assert '/DIR="C:/Games/Blackville"' in args
-    assert '/LOG="C:/Temp/update.log"' in args
+    # str(Path) на Windows даёт обратные слэши — сравниваем через str()
+    assert f'/DIR="{target}"' in args
+    assert f'/LOG="{log_path}"' in args
 
 
 def test_installer_args_interactive_without_silent_flags():
