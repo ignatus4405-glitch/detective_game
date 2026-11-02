@@ -1,4 +1,7 @@
+import zipfile
 from pathlib import Path
+
+import pytest
 
 from detective_game import updater
 from detective_game.updater import _parse_version, is_newer
@@ -286,12 +289,12 @@ def test_run_installer_passes_env_to_helper(monkeypatch, tmp_path):
     calls = []
 
     class FakePopen:
-        """Имитация cmd: помощник «отчитывается» файлом-флагом из env."""
+        """Имитация скрытого запуска: помощник «отчитывается» файлом-флагом."""
 
         def __init__(self, cmd, **kwargs):
             calls.append((cmd, kwargs))
             ready = (kwargs.get("env") or {}).get("BLK_READY")
-            if ready and "bat" in cmd[-1] and "cmd" in cmd:
+            if ready:
                 Path(ready).write_text("started", encoding="utf-8")
 
     monkeypatch.setattr(updater.sys, "platform", "win32")
@@ -303,7 +306,10 @@ def test_run_installer_passes_env_to_helper(monkeypatch, tmp_path):
     assert ok is True
     assert len(calls) == 1
     cmd, kwargs = calls[0]
-    assert "bat" in cmd[-1]
+    # запускаем скрыто: wscript + VBS, а не видимое окно cmd
+    assert "wscript" in cmd[0].lower()
+    assert cmd[1] == "//B"
+    assert cmd[-1].endswith(".bat")
     env = kwargs.get("env")
     assert env is not None, "Popen должен получить env с BLK_INSTALLER"
     assert env["BLK_INSTALLER"] == str(installer)
@@ -518,11 +524,228 @@ def test_main_reports_failed_update_without_crash(monkeypatch, tmp_path):
 
     game = game_main.Game.__new__(game_main.Game)
     game.notifications = []
+    game.failed_update = None
+    game.update_dismissed = True
 
     def add(text):
         game.notifications.append(text)
 
     game.add_notification = add
     game._report_update_result({"status": "failed", "target": "0.1.26", "current": "0.1.25"})
-    assert game.notifications
-    assert "0.1.26" in game.notifications[0]
+    # неудачу показываем баннером, а не уведомлением на 4 секунды
+    assert game.failed_update is not None
+    assert game.failed_update["target"] == "0.1.26"
+    assert game.update_dismissed is False
+
+
+# ---------------------------------------------------------------------------
+# Обновление файлов из архива (0.1.28): без инсталлятора и без окна консоли
+# ---------------------------------------------------------------------------
+
+
+def _make_release_zip(path, version="0.1.28", *, exe=True, top="DetectiveBlackville"):
+    import zipfile
+
+    with zipfile.ZipFile(path, "w") as zf:
+        prefix = f"{top}/" if top else ""
+        if exe:
+            zf.writestr(prefix + "DetectiveBlackville.exe", b"MZ" + b"x" * 2048)
+        if top:
+            zf.writestr(prefix + "_internal/VERSION", version + "\n")
+        else:
+            zf.writestr("VERSION", version + "\n")
+        zf.writestr(prefix + "_internal/python311.dll", b"dll")
+    return path
+
+
+def test_stage_zip_update_extracts_and_promotes_top_folder(tmp_path, monkeypatch):
+    archive = _make_release_zip(tmp_path / "DetectiveBlackville-Windows.zip")
+    monkeypatch.setattr(updater, "get_app_log_path", lambda: tmp_path / "update.log")
+    monkeypatch.setattr(updater.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+
+    stage = updater.stage_zip_update(archive, "0.1.28", target_dir=tmp_path / "game")
+    assert (stage / "DetectiveBlackville.exe").exists()
+    assert (stage / "_internal" / "python311.dll").exists()
+    assert updater._version_in_dir(stage) == "0.1.28"
+
+
+def test_stage_zip_update_rejects_wrong_version(tmp_path, monkeypatch):
+    archive = _make_release_zip(tmp_path / "zip.zip", version="0.1.20")
+    monkeypatch.setattr(updater, "get_app_log_path", lambda: tmp_path / "update.log")
+    monkeypatch.setattr(updater.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+    with pytest.raises(updater.UpdateCheckError):
+        updater.stage_zip_update(archive, "0.1.28", target_dir=tmp_path / "game")
+
+
+def test_stage_zip_update_requires_exe(tmp_path, monkeypatch):
+    archive = _make_release_zip(tmp_path / "zip.zip", exe=False)
+    monkeypatch.setattr(updater, "get_app_log_path", lambda: tmp_path / "update.log")
+    monkeypatch.setattr(updater.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+    with pytest.raises(updater.UpdateCheckError):
+        updater.stage_zip_update(archive, "0.1.28", target_dir=tmp_path / "game")
+
+
+def test_stage_zip_update_blocks_zip_slip(tmp_path, monkeypatch):
+    import zipfile
+
+    archive = tmp_path / "evil.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("DetectiveBlackville.exe", b"MZ")
+        zf.writestr("../../evil.txt", b"pwned")
+    monkeypatch.setattr(updater, "get_app_log_path", lambda: tmp_path / "update.log")
+    monkeypatch.setattr(updater.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+    stage = updater.stage_zip_update(archive, "0.1.28", target_dir=tmp_path / "game")
+    assert not (tmp_path / "evil.txt").exists()
+    assert (stage / "DetectiveBlackville.exe").exists()
+
+
+def test_apply_helper_copies_files_and_relaunches(tmp_path, monkeypatch):
+    stage = tmp_path / "stage" / "DetectiveBlackville"
+    stage.mkdir(parents=True)
+    (stage / "DetectiveBlackville.exe").write_bytes(b"MZ")
+    target = tmp_path / "game"
+    target.mkdir()
+
+    monkeypatch.setattr(updater.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(updater, "get_update_log_path", lambda: tmp_path / "inst.log")
+    monkeypatch.setattr(updater, "helper_ready_path", lambda: tmp_path / "ready.flag")
+    monkeypatch.setattr(updater, "get_install_dir", lambda: target)
+    monkeypatch.setattr(updater, "is_dir_writable", lambda p: True)
+    monkeypatch.setattr(updater, "write_pending_update", lambda *a, **kw: None)
+
+    calls = []
+
+    class FakePopen:
+        def __init__(self, cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            ready = (kwargs.get("env") or {}).get("BLK_READY")
+            if ready:
+                Path(ready).write_text("started", encoding="utf-8")
+
+    monkeypatch.setattr(updater.subprocess, "Popen", FakePopen)
+    ok = updater.run_staged_update(stage, version="0.1.28")
+    assert ok is True
+
+    bat = next(Path(c[-1]) for c, _ in calls if str(c[-1]).endswith(".bat"))
+    text = bat.read_text(encoding="ascii")
+    bat.read_bytes().decode("ascii")  # помощник без кириллицы
+    assert "xcopy" in text and "/E" in text and "/Y" in text
+    assert "%BLK_STAGE%" in text and "%BLK_TARGET%" in text
+    assert "tasklist" in text and "waitgame" in text
+    assert "start \"\" \"%BLK_EXE%\"" in text
+    # запуск скрытый: wscript, а не видимая консоль cmd /c start
+    cmd = calls[0][0]
+    assert "wscript" in cmd[0].lower() and cmd[1] == "//B"
+    env = calls[0][1]["env"]
+    assert env["BLK_STAGE"] == str(stage)
+    assert env["BLK_TARGET"] == str(target)
+    assert env["BLK_PID"]
+    assert env["BLK_EXE"].endswith("DetectiveBlackville.exe")
+
+
+def test_staged_update_refuses_readonly_dir(tmp_path, monkeypatch):
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    monkeypatch.setattr(updater, "get_install_dir", lambda: tmp_path / "game")
+    monkeypatch.setattr(updater, "is_dir_writable", lambda p: False)
+    assert updater.run_staged_update(stage, version="0.1.28") is False
+
+
+def test_preferred_download_uses_zip_when_writable(tmp_path, monkeypatch):
+    checker = updater.UpdateChecker()
+    checker.result = {
+        "download_url": "https://x/Setup.exe",
+        "zip_url": "https://x/DetectiveBlackville-Windows.zip",
+    }
+    monkeypatch.setattr(updater.sys, "platform", "win32")
+    monkeypatch.setattr(updater, "get_install_dir", lambda: tmp_path)
+    monkeypatch.setattr(updater, "is_dir_writable", lambda p: True)
+    url, kind = checker.preferred_download()
+    assert kind == "zip" and url.endswith(".zip")
+
+    monkeypatch.setattr(updater, "is_dir_writable", lambda p: False)
+    url, kind = checker.preferred_download()
+    assert kind == "setup" and url.endswith(".exe")
+
+
+def test_install_applies_staged_zip(tmp_path, monkeypatch):
+    """install() для .zip не зовёт инсталлятор, а копирует файлы."""
+    archive = _make_release_zip(tmp_path / "DetectiveBlackville-Windows.zip")
+    checker = updater.UpdateChecker()
+    checker.downloaded_path = archive
+    checker.download_target_version = "0.1.28"
+
+    monkeypatch.setattr(updater, "stage_zip_update", lambda *a, **kw: tmp_path / "stage")
+    called = {}
+    monkeypatch.setattr(
+        updater,
+        "run_staged_update",
+        lambda stage, **kw: called.setdefault("stage", stage) is not None,
+    )
+    monkeypatch.setattr(
+        updater, "run_installer", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("setup"))
+    )
+    assert checker.install() is True
+    assert called["stage"] == tmp_path / "stage"
+
+
+def test_install_reports_staging_error(tmp_path, monkeypatch):
+    archive = tmp_path / "DetectiveBlackville-Windows.zip"
+    archive.write_bytes(b"not a zip")
+    checker = updater.UpdateChecker()
+    checker.downloaded_path = archive
+    checker.download_target_version = "0.1.28"
+    monkeypatch.setattr(updater, "get_app_log_path", lambda: tmp_path / "update.log")
+    monkeypatch.setattr(updater.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+    assert checker.install() is False
+    assert "подготовить" in (checker.download_error or "")
+
+
+def test_stage_env_logs_to_app_log(tmp_path, monkeypatch):
+    """Помощник пишет в тот же журнал, который открывает кнопка «ЖУРНАЛ»."""
+    log = tmp_path / "update.log"
+    monkeypatch.setattr(updater, "get_app_log_path", lambda: log)
+    env = updater.build_stage_env(tmp_path / "stage", tmp_path / "game", "0.1.28")
+    assert env["BLK_LOG"] == str(log)
+
+
+def test_stage_helper_logs_copy_result():
+    """bat-помощник сообщает код xcopy и версию установленных файлов."""
+    text = updater._stage_bat_script()
+    assert "xcopy" in text
+    assert "xcopy exit code" in text
+    assert "NEW EXE MISSING" in text
+    assert "copy /y" in text  # синхронизация корневого VERSION
+
+
+def test_install_reports_setup_failure(tmp_path, monkeypatch):
+    """Провал установщика тоже даёт причину для баннера, а не тишину."""
+    installer = tmp_path / "DetectiveBlackville-Setup-0.1.28.exe"
+    installer.write_bytes(b"MZ")
+    checker = updater.UpdateChecker()
+    checker.downloaded_path = installer
+    checker.download_target_version = "0.1.28"
+    monkeypatch.setattr(updater, "get_app_log_path", lambda: tmp_path / "update.log")
+    monkeypatch.setattr(updater, "run_installer", lambda *a, **kw: False)
+    assert checker.install() is False
+    assert "установщик" in (checker.download_error or "").lower()
+
+
+def test_stage_creates_root_version_when_archive_has_none(tmp_path, monkeypatch):
+    """Корневой VERSION обязателен: без него игра снова предложит обновление."""
+    archive = tmp_path / "DetectiveBlackville-Windows.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("DetectiveBlackville/DetectiveBlackville.exe", b"MZ")
+        zf.writestr("DetectiveBlackville/_internal/VERSION", "0.1.28\n")
+    stage = updater.stage_zip_update(
+        archive, "0.1.28", target_dir=tmp_path / "game", work_dir=tmp_path / "temp"
+    )
+    assert (stage / "VERSION").read_text(encoding="utf-8").strip() == "0.1.28"
+
+
+def test_version_in_dir_reads_packaged_candidate(tmp_path):
+    """VERSION может лежать только в _internal/detective_game (package data)."""
+    packaged = tmp_path / "_internal" / "detective_game"
+    packaged.mkdir(parents=True)
+    (packaged / "VERSION").write_text("0.1.28\n", encoding="utf-8")
+    assert updater._version_in_dir(tmp_path) == "0.1.28"

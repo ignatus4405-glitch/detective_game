@@ -13,6 +13,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python: ["3.10", "3.11"]
     runs-on: ${{ matrix.os }}
+    # Зависший тест не должен держать раннер (и checks) часами.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
