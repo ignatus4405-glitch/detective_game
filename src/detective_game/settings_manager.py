@@ -20,9 +20,9 @@ SUPPORTED_RESOLUTIONS = [
 ]
 
 WINDOW_MODES = [
-    ("windowed", "Оконный", "🗔"),
-    ("fullscreen", "Полный экран", "⛶"),
-    ("borderless", "Без рамки", "▭"),
+    ("windowed", "Оконный", ""),
+    ("fullscreen", "Полный экран", ""),
+    ("borderless", "Без рамки", ""),
 ]
 
 def get_available_resolutions():

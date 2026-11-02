@@ -49,3 +49,23 @@ def test_clue_leads_to_valid_locations():
         for clue in case["clues"]:
             for target in clue.get("leads_to", []):
                 assert target in loc_ids, f"clue {clue['id']} leads_to unknown {target} in case {case['id']}"
+
+
+def test_every_listed_case_can_be_loaded():
+    """Регрессия: дело из example.json (id=tutorial) не открывалось —
+    load_case искал файл tutorial.json, а не поле id."""
+    from detective_game.data import list_cases, load_case
+
+    cases = list_cases()
+    assert cases
+    for case in cases:
+        loaded = load_case(case["id"])
+        assert loaded is not None, f"дело {case['id']} не загружается"
+        assert loaded["id"] == case["id"]
+        assert loaded["locations"], f"у дела {case['id']} нет локаций"
+
+
+def test_load_case_unknown_returns_none():
+    from detective_game.data import load_case
+
+    assert load_case("no_such_case_123") is None

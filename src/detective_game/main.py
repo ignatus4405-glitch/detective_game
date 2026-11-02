@@ -19,14 +19,19 @@ from .save_system import (
     save_game,
     save_settings,
 )
+from .ui.layout import case_select_layout, customization_layout, settings_layout
 from .ui.widgets import (
     Button,
     TextInput,
     draw_avatar,
+    draw_die_icon,
+    draw_icon,
     draw_map_pin,
     draw_panel,
     draw_text_wrapped,
     get_font,
+    render_text,
+    safe_text,
 )
 from .updater import UpdateChecker, consume_update_result, install_requires_elevation
 
@@ -157,6 +162,8 @@ class Game:
             placeholder="Введите имя детектива... Например: Алекс Рейн",
             text=self.state.detective.name,
         )
+        # прямоугольник поля берём из общего макета — он же используется кликами
+        self.name_input.rect = self._customization_layout().name_input
         # на аватар индекс
         for i, av in enumerate(AVATARS):
             if av["id"] == self.state.detective.avatar_id:
@@ -420,40 +427,33 @@ class Game:
                     self._settings_changed = True
                     return
         if self.screen_name == "customization":
+            # Единый макет: те же прямоугольники, что и при отрисовке (логические
+            # координаты 1280×720). Раньше здесь брался размер физического окна,
+            # поэтому на fullscreen/крупных разрешениях клики по портретам уходили мимо.
+            layout = self._customization_layout()
+            self.name_input.rect = layout.name_input
             self.name_input.handle_event(event)
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                # avatar clicks — синхронизировано с draw_customization layout
-                W, H = self.screen.get_size()
-                panel = pygame.Rect(30, 75, W - 60, 620)
-                avatar_w, avatar_h = 140, 140
-                gap_x, gap_y = 25, 15
-                total_w = 3 * avatar_w + 2 * gap_x
-                start_x = panel.x + (panel.w - total_w) // 2
-                start_y = panel.y + 160
-                for i in range(len(AVATARS)):
-                    col = i % 3
-                    row = i // 3
-                    x = start_x + col * (avatar_w + gap_x)
-                    y = start_y + row * (avatar_h + gap_y)
-                    rect = pygame.Rect(x, y, avatar_w, avatar_h)
-                    if rect.collidepoint(event.pos):
-                        self.selected_avatar = i
-                        # Генерация имени, связанная с фото: подставляем полный вариант имени аватара
-                        try:
-                            from .game_state import get_random_name_for_avatar
-                            self.name_input.text = get_random_name_for_avatar(AVATARS[i]["id"])
-                        except Exception:
-                            pass
-                # background clicks — синхронизировано с draw_customization
-                past_y = start_y + 2 * (avatar_h + gap_y) + 15 + 28 + 15  # desc_rect.bottom +15
-                bg_y = past_y + 22
-                btn_w, btn_h = 150, 36
-                total_bg_w = 3 * btn_w + 2 * 15
-                bg_start_x = panel.x + (panel.w - total_bg_w) // 2
-                for i, bg in enumerate(BACKGROUNDS):
-                    rect = pygame.Rect(bg_start_x + i * (btn_w + 15), bg_y, btn_w, btn_h)
-                    if rect.collidepoint(event.pos):
-                        self.selected_bg = bg["id"]
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                avatar_idx = layout.avatar_at(event.pos)
+                if avatar_idx is not None:
+                    self.select_avatar(avatar_idx)
+                bg_idx = layout.background_at(event.pos)
+                if bg_idx is not None:
+                    self.selected_bg = BACKGROUNDS[bg_idx]["id"]
+        elif self.screen_name == "case_select":
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                layout = self._case_select_layout()
+                if layout.btn_back.collidepoint(event.pos):
+                    pygame.time.wait(150)
+                    self.screen_name = "menu"
+                    return
+                for idx, case in enumerate(self.cases):
+                    if idx >= len(layout.cards):
+                        break
+                    if layout.cards[idx].button.collidepoint(event.pos):
+                        pygame.time.wait(150)
+                        self.start_case(case["id"])
+                        return
         elif self.screen_name == "map":
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if self.current_case:
@@ -659,105 +659,112 @@ class Game:
         quote = font_small.render("«Город не спит. Он ждёт, когда ты ошибёшься.»", True, COLOR_TEXT_DIM)
         self.screen.blit(quote, quote.get_rect(center=(W // 2, H - 20)))
 
+    def _customization_layout(self):
+        """Макет экрана кастомизации в логических координатах (общий для draw и кликов)."""
+        return customization_layout(
+            self.LOGICAL_W,
+            self.LOGICAL_H,
+            avatars=len(AVATARS),
+            backgrounds=len(BACKGROUNDS),
+        )
+
+    def select_avatar(self, index: int) -> None:
+        """Выбирает портрет и подставляет подходящее имя."""
+        if not 0 <= index < len(AVATARS):
+            return
+        self.selected_avatar = index
+        try:
+            from .game_state import get_random_name_for_avatar
+
+            self.name_input.text = get_random_name_for_avatar(AVATARS[index]["id"])
+        except Exception:
+            pass
+
     def draw_customization(self):
-        W, H = self.screen.get_size()
+        W, H = self.LOGICAL_W, self.LOGICAL_H
+        layout = self._customization_layout()
+        panel = layout.panel
         font_title = get_font(26, bold=True)
         font_sub = get_font(14, bold=True)
         font_hint = get_font(11)
         font_btn = get_font(14, bold=True)
         mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
-        header_rect = pygame.Rect(30, 15, W - 60, 50)
-        draw_panel(self.screen, header_rect)
+
+        draw_panel(self.screen, layout.header)
         title = font_title.render("КАСТОМИЗАЦИЯ ДЕТЕКТИВА", True, COLOR_ACCENT)
-        self.screen.blit(title, title.get_rect(center=(W // 2, 40)))
-        panel = pygame.Rect(30, 75, W - 60, 620)
+        self.screen.blit(title, title.get_rect(center=(W // 2, layout.header.centery)))
         draw_panel(self.screen, panel)
 
-        # --- Секция 1: Имя (верх, 80px) ---
+        # --- Секция 1: Имя ---
         label = font_sub.render("ИМЯ ДЕТЕКТИВА", True, COLOR_ACCENT)
-        self.screen.blit(label, (panel.x + 25, panel.y + 15))
+        self.screen.blit(label, layout.name_label)
         # Поле ввода + кнопка генерации имени (связана с фото ниже)
-        self.name_input.rect = pygame.Rect(panel.x + 25, panel.y + 40, panel.w - 110, 42)
+        self.name_input.rect = layout.name_input
         self.name_input.draw(self.screen, get_font(16))
-        # Кнопка 🎲 генерации имени — берёт имя из пула выбранного аватара
-        btn_gen = Button((panel.right - 80, panel.y + 40, 85, 42), "🎲", tooltip=f"Случайное имя для «{AVATARS[self.selected_avatar]['name']}»", style="secondary")
+        avatar_name = AVATARS[self.selected_avatar]["name"]
+        btn_gen = Button(layout.name_button, "", tooltip=f"Случайное имя для «{avatar_name}»", style="secondary")
         btn_gen.update(mouse, pressed)
         btn_gen.draw(self.screen, get_font(16))
+        draw_die_icon(
+            self.screen,
+            layout.name_button,
+            color=COLOR_ACCENT if (btn_gen.hovered or btn_gen.pressed) else COLOR_TEXT_DIM,
+        )
         if btn_gen.clicked:
-            from .game_state import get_random_name_for_avatar
-            self.name_input.text = get_random_name_for_avatar(AVATARS[self.selected_avatar]["id"])
+            self.select_avatar(self.selected_avatar)
             self.add_notification(f"Имя сгенерировано: {self.name_input.text}")
+
         hint = font_hint.render(
-            "Нажмите 🎲 для случайного имени или выберите портрет — имя подберётся автоматически.",
+            "Нажмите на кубик для случайного имени или выберите портрет — имя подберётся автоматически.",
             True,
             COLOR_TEXT_DARK,
         )
-        self.screen.blit(hint, (panel.x + 25, panel.y + 88))
+        self.screen.blit(hint, (layout.name_hint[0], layout.name_hint[1]))
 
         # Разделитель
         pygame.draw.line(
             self.screen,
             COLOR_BORDER,
-            (panel.x + 25, panel.y + 108),
-            (panel.right - 25, panel.y + 108),
+            (panel.x + 25, layout.divider_y),
+            (panel.right - 25, layout.divider_y),
             1,
         )
 
-        # --- Секция 2: Выбор образа (центр) ---
+        # --- Секция 2: Выбор образа ---
         label2 = font_sub.render("ВЫБЕРИТЕ ОБРАЗ", True, COLOR_ACCENT)
-        self.screen.blit(label2, (panel.x + 25, panel.y + 120))
-        # Подсказка
+        self.screen.blit(label2, layout.avatars_label)
         sub_hint = font_hint.render("Нажмите на портрет чтобы выбрать", True, COLOR_TEXT_DARK)
-        self.screen.blit(sub_hint, (panel.x + 25, panel.y + 138))
+        self.screen.blit(sub_hint, layout.avatars_hint)
 
-        # Сетка аватаров — 3x2, компактная, центрирована
-        avatar_w, avatar_h = 140, 140
-        gap_x, gap_y = 25, 15
-        total_w = 3 * avatar_w + 2 * gap_x
-        start_x = panel.x + (panel.w - total_w) // 2
-        start_y = panel.y + 160
-
+        hovered_avatar = layout.avatar_at(mouse)
         for i, av in enumerate(AVATARS):
-            col = i % 3
-            row = i // 3
-            x = start_x + col * (avatar_w + gap_x)
-            y = start_y + row * (avatar_h + gap_y)
-            rect = pygame.Rect(x, y, avatar_w, avatar_h)
+            rect = layout.avatar_rects[i]
             draw_avatar(self.screen, rect, av, selected=(i == self.selected_avatar))
+            if hovered_avatar == i and i != self.selected_avatar:
+                pygame.draw.rect(self.screen, COLOR_ACCENT_DIM, rect, width=2, border_radius=10)
 
         # Описание выбранного — под сеткой, в рамке
         selected_av = AVATARS[self.selected_avatar]
-        desc_rect = pygame.Rect(
-            panel.x + 25, start_y + 2 * (avatar_h + gap_y) + 15, panel.w - 50, 28
-        )
         draw_panel(
             self.screen,
-            desc_rect,
+            layout.desc,
             color=(32, 28, 40),
             border=COLOR_ACCENT_DIM,
             radius=6,
             with_shadow=False,
         )
         desc_text = f"{selected_av['name']} — {selected_av['desc']}"
-        desc_font = get_font(11)
-        desc_surf = desc_font.render(desc_text, True, COLOR_ACCENT)
-        self.screen.blit(desc_surf, desc_surf.get_rect(center=desc_rect.center))
+        desc_surf = render_text(get_font(11), desc_text, COLOR_ACCENT)
+        self.screen.blit(desc_surf, desc_surf.get_rect(center=layout.desc.center))
 
-        # --- Секция 3: Прошлое (низ) ---
-        past_y = desc_rect.bottom + 15
+        # --- Секция 3: Прошлое ---
         label3 = font_sub.render("ПРОШЛОЕ", True, COLOR_ACCENT)
-        self.screen.blit(label3, (panel.x + 25, past_y))
+        self.screen.blit(label3, layout.past_label)
 
-        btn_w, btn_h = 150, 36
-        total_bg_w = 3 * btn_w + 2 * 15
-        bg_start_x = panel.x + (panel.w - total_bg_w) // 2
-        bg_y = past_y + 22
-
-        # Подсказка при наведении на кнопку прошлого — ярлычок значения
         hovered_bg_tooltip = None
         for i, bg in enumerate(BACKGROUNDS):
-            rect = pygame.Rect(bg_start_x + i * (btn_w + 15), bg_y, btn_w, btn_h)
+            rect = layout.bg_rects[i]
             is_sel = bg["id"] == self.selected_bg
             col = COLOR_ACCENT if is_sel else COLOR_PANEL_LIGHT
             tcol = (10, 10, 10) if is_sel else COLOR_TEXT
@@ -769,25 +776,22 @@ class Game:
                 width=2 if is_sel else 1,
                 border_radius=8,
             )
-            font = get_font(12, bold=True)
-            txt = font.render(bg["icon"] + " " + bg["label"], True, tcol)
+            txt = render_text(get_font(12, bold=True), bg["label"], tcol)
             self.screen.blit(txt, txt.get_rect(center=rect.center))
             if rect.collidepoint(mouse):
-                # Ярлычок значения для этой кнопки
                 hovered_bg_tooltip = bg
 
-        # описание бэкграунда — под кнопками
+        # описание прошлого — отдельной строкой над кнопками (раньше наезжало на них)
         bg_desc_map = {
             "private_eye": "Умеет находить общий язык с улицей. +1 к доверию свидетелей.",
             "ex_cop": "Связи в полиции. Видит скрытые детали в протоколах.",
             "reporter": "Острый глаз и умение разговорить любого собеседника.",
         }
         desc_text = bg_desc_map.get(self.selected_bg, "")
-        # Центрируем подсказку внутри панели с отступом снизу — не прижимаем к краю
-        bg_hint_rect = pygame.Rect(panel.x + 25, panel.bottom - 28, panel.w - 50, 18)
         bg_hint = font_hint.render(desc_text, True, COLOR_TEXT_DIM)
-        self.screen.blit(bg_hint, bg_hint.get_rect(center=bg_hint_rect.center))
-        # Рисуем ярлычок при наведении на кнопку прошлого
+        self.screen.blit(bg_hint, bg_hint.get_rect(center=layout.bg_hint.center))
+
+        # ярлычок при наведении на кнопку прошлого
         if hovered_bg_tooltip:
             tip_text = bg_desc_map.get(hovered_bg_tooltip["id"], "")
             tip_font = get_font(10)
@@ -800,9 +804,9 @@ class Game:
             pygame.draw.rect(self.screen, COLOR_ACCENT, bg_rect, width=1, border_radius=6)
             self.screen.blit(tip_font.render(tip_text, True, COLOR_TEXT), (tx, ty))
 
-        # кнопки — внизу панели, с отступом (с ярлычками)
-        btn_back = Button((panel.x + 25, panel.bottom - 42, 160, 36), "← НАЗАД", tooltip="Вернуться в главное меню без сохранения")
-        btn_save = Button((panel.right - 175, panel.bottom - 42, 150, 36), "СОХРАНИТЬ", accent=True, tooltip="Сохранить детектива и перейти к выбору дела")
+        # --- Кнопки «Назад» / «Сохранить» — отдельная строка футера ---
+        btn_back = Button(layout.btn_back, "← НАЗАД", tooltip="Вернуться в главное меню без сохранения")
+        btn_save = Button(layout.btn_save, "СОХРАНИТЬ", accent=True, tooltip="Сохранить детектива и перейти к выбору дела")
         for btn, action in [(btn_back, "back"), (btn_save, "save")]:
             btn.update(mouse, pressed)
             btn.draw(self.screen, font_btn)
@@ -811,7 +815,6 @@ class Game:
                 if action == "back":
                     self.screen_name = "menu"
                 else:
-                    # сохраняем
                     name = self.name_input.text.strip()
                     if len(name) < 2:
                         self.add_notification("Имя слишком короткое!")
@@ -827,75 +830,79 @@ class Game:
                     self.add_notification(f"Детектив {name} сохранён")
                     self.screen_name = "case_select"
 
+    def _case_select_layout(self):
+        """Раскладка выбора дела в логических координатах — общая для draw и кликов."""
+        return case_select_layout(self.LOGICAL_W, self.LOGICAL_H, len(self.cases))
+
     def draw_case_select(self):
-        W, H = self.screen.get_size()
+        W, H = self.LOGICAL_W, self.LOGICAL_H
+        layout = self._case_select_layout()
         font_title = get_font(28, bold=True)
         font_btn = get_font(16, bold=True)
-        header = pygame.Rect(30, 20, W - 60, 60)
-        draw_panel(self.screen, header)
+        draw_panel(self.screen, layout.header)
         t = font_title.render("ВЫБЕРИ ДЕЛО, ДЕТЕКТИВ", True, COLOR_ACCENT)
-        self.screen.blit(t, t.get_rect(center=(W // 2, 50)))
-        # карточки дел — центрируем по текущей ширине
+        self.screen.blit(t, t.get_rect(center=(W // 2, layout.header.centery)))
+        mouse = self._to_logical(pygame.mouse.get_pos())
+        pressed = pygame.mouse.get_pressed()[0]
+        btn_font = get_font(14, bold=True)
+
         for idx, case in enumerate(self.cases):
-            x = 40 + idx * 620
-            rect = pygame.Rect(x, 110, 580, 560)
-            if rect.x > W:
-                continue
+            if idx >= len(layout.cards):
+                break
+            card = layout.cards[idx]
+            rect = card.rect
             draw_panel(self.screen, rect)
             # постер-заглушка
-            poster = pygame.Rect(rect.x + 15, rect.y + 15, rect.w - 30, 180)
-            # градиент
+            poster = card.poster
             for i in range(poster.h):
                 col = (30 + i // 3, 30 + i // 4, 40 + i // 5)
                 pygame.draw.line(
                     self.screen, col, (poster.x, poster.y + i), (poster.right, poster.y + i)
                 )
             pygame.draw.rect(self.screen, COLOR_BORDER, poster, width=1, border_radius=8)
-            # иконка дела
-            font_big = get_font(48, bold=True)
-            icon = "🕵️" if idx == 0 else "🏦"
-            ic = font_big.render(icon, True, COLOR_ACCENT)
-            self.screen.blit(ic, ic.get_rect(center=poster.center))
-            # заголовок
-            title_font = get_font(20, bold=True)
-            title = title_font.render(case["title"], True, COLOR_TEXT)
-            self.screen.blit(title, (rect.x + 20, poster.bottom + 15))
-            sub = get_font(13).render(case["subtitle"], True, COLOR_ACCENT)
-            self.screen.blit(sub, (rect.x + 20, poster.bottom + 40))
-            # сложность
-            diff = get_font(12).render(
+            # иконка-бейдж дела (эмодзи нет в бандл-шрифте — рисуем букву в кольце)
+            draw_icon(
+                self.screen,
+                "",
+                poster.center,
+                max(48, min(poster.w, poster.h) // 2),
+                color=COLOR_ACCENT,
+                fallback=(case["title"][:1] or "?"),
+            )
+            # заголовок и подзаголовок
+            title_surf = get_font(18, bold=True).render(case["title"], True, COLOR_TEXT)
+            self.screen.blit(title_surf, card.title_pos)
+            sub = get_font(12).render(case["subtitle"], True, COLOR_ACCENT)
+            self.screen.blit(sub, card.subtitle_pos)
+            diff = get_font(11).render(
                 f"{case['difficulty']} • {case['duration']}", True, COLOR_TEXT_DIM
             )
-            self.screen.blit(diff, (rect.x + 20, poster.bottom + 58))
+            self.screen.blit(diff, card.meta_pos)
             # описание
-            desc_rect = pygame.Rect(rect.x + 20, poster.bottom + 80, rect.w - 40, 120)
             draw_text_wrapped(
-                self.screen, case["description"], get_font(13), COLOR_TEXT_DIM, desc_rect
+                self.screen, case["description"], get_font(12), COLOR_TEXT_DIM, card.desc
             )
-            # интро
-            intro_rect = pygame.Rect(rect.x + 15, rect.y + 380, rect.w - 30, 80)
-            draw_panel(self.screen, intro_rect, color=(20, 20, 28), border=(40, 40, 50))
-            draw_text_wrapped(
-                self.screen,
-                case["intro"][:220] + "...",
-                get_font(11),
-                COLOR_TEXT_DIM,
-                pygame.Rect(
-                    intro_rect.x + 10, intro_rect.y + 8, intro_rect.w - 20, intro_rect.h - 16
-                ),
-            )
-            # кнопка
-            btn_rect = pygame.Rect(rect.x + 20, rect.bottom - 50, rect.w - 40, 40)
-            # hover check
-            mouse = self._to_logical(pygame.mouse.get_pos())
+            # интро (на низких экранах может не хватить места — тогда пропускаем)
+            if card.intro.h > 0:
+                draw_panel(self.screen, card.intro, color=(20, 20, 28), border=(40, 40, 50))
+                draw_text_wrapped(
+                    self.screen,
+                    case["intro"][:220] + "...",
+                    get_font(10),
+                    COLOR_TEXT_DIM,
+                    pygame.Rect(
+                        card.intro.x + 10, card.intro.y + 8, card.intro.w - 20, card.intro.h - 16
+                    ),
+                )
+            # кнопка «ВЗЯТЬ ДЕЛО»
+            btn_rect = card.button
             hovered = btn_rect.collidepoint(mouse)
             col = COLOR_ACCENT_HOVER if hovered else COLOR_ACCENT
             pygame.draw.rect(self.screen, col, btn_rect, border_radius=6)
             pygame.draw.rect(self.screen, COLOR_BORDER, btn_rect, width=1, border_radius=6)
-            # Убрана цена — оставлено только «ВЗЯТЬ ДЕЛО»
-            btn_text = get_font(14, bold=True).render("ВЗЯТЬ ДЕЛО", True, (10, 10, 10))
+            btn_text = btn_font.render("ВЗЯТЬ ДЕЛО", True, (10, 10, 10))
             self.screen.blit(btn_text, btn_text.get_rect(center=btn_rect.center))
-            # Ярлычок-тултип цены при наведении (если есть)
+            # ярлычок-тултип цены при наведении (если есть)
             if hovered and case.get("price"):
                 tip_font = get_font(10)
                 tip = case["price"]
@@ -906,18 +913,10 @@ class Game:
                 pygame.draw.rect(self.screen, (28, 28, 36), tp_rect, border_radius=4)
                 pygame.draw.rect(self.screen, COLOR_BORDER, tp_rect, width=1, border_radius=4)
                 self.screen.blit(tip_font.render(tip, True, COLOR_TEXT_DIM), (tx, ty))
-            if hovered and pygame.mouse.get_pressed()[0]:
-                pygame.time.wait(150)
-                self.start_case(case["id"])
-        # назад
-        btn_back = Button((30, H - 40, 160, 30), "← НАЗАД", tooltip="Вернуться в меню")
-        mouse = self._to_logical(pygame.mouse.get_pos())
-        pressed = pygame.mouse.get_pressed()[0]
+        # назад (клик обрабатывается в handle_event — по событиям мыши)
+        btn_back = Button(layout.btn_back, "← НАЗАД", tooltip="Вернуться в меню")
         btn_back.update(mouse, pressed)
         btn_back.draw(self.screen, font_btn)
-        if btn_back.clicked:
-            pygame.time.wait(150)
-            self.screen_name = "menu"
 
     def start_case(self, case_id):
         case = load_case(case_id)
@@ -1181,9 +1180,14 @@ class Game:
             "mansion": "🏰",
         }
         icon = icon_map.get(loc["type"], "📍")
-        font_big = get_font(72)
-        ic = font_big.render(icon, True, (200, 200, 210))
-        self.screen.blit(ic, ic.get_rect(center=visual.center))
+        draw_icon(
+            self.screen,
+            icon,
+            visual.center,
+            96,
+            color=(200, 200, 210),
+            fallback=(loc["name"][:1] or "?"),
+        )
         # описание
         desc_rect = pygame.Rect(main_rect.x + 15, visual.bottom + 15, 500, 100)
         draw_panel(self.screen, desc_rect, color=(22, 22, 30))
@@ -1348,14 +1352,14 @@ class Game:
             # бэкграунд бонус
             if self.state.detective.background == "ex_cop" and ch["location"] == "police":
                 bonus = get_font(11).render(
-                    "💡 Бонус «Бывший коп»: Сержант Грей делится дополнительным протоколом.",
+                    "Бонус «Бывший коп»: Сержант Грей делится дополнительным протоколом.",
                     True,
                     COLOR_GREEN,
                 )
                 self.screen.blit(bonus, (panel.x + 20, a_rect.bottom + 10))
             elif self.state.detective.background == "reporter" and ch["id"] == "barmen":
                 bonus2 = get_font(11).render(
-                    "💡 Бонус «Репортёр»: Бармен рассказывает больше — вы умеете разговорить.",
+                    "Бонус «Репортёр»: Бармен рассказывает больше — вы умеете разговорить.",
                     True,
                     COLOR_GREEN,
                 )
@@ -1371,7 +1375,7 @@ class Game:
             # если это Рома и у нас есть ticket — можно дать ключ
             if ch["id"] == "roma" and "clue_ticket" in self.state.collected_clues:
                 clue_extra = get_font(12).render(
-                    "🎁 Получена наводка: Ключ в порту, ящик у 3-го причала!", True, COLOR_ACCENT
+                    "Получена наводка: Ключ в порту, ящик у 3-го причала!", True, COLOR_ACCENT
                 )
                 self.screen.blit(clue_extra, (panel.x + 20, end_rect.bottom + 10))
         # кнопки
@@ -1494,7 +1498,7 @@ class Game:
                 self.screen.blit(desc, (r.x + 40, r.y + 32))
                 loc = get_location(self.current_case, clue["location"])
                 loc_txt = get_font(10).render(
-                    f"📍 {loc['name'] if loc else clue['location']}", True, COLOR_ACCENT
+                    f"{loc['name'] if loc else clue['location']}", True, COLOR_ACCENT
                 )
                 self.screen.blit(loc_txt, (r.x + 40, r.y + 50))
             else:
@@ -1736,14 +1740,15 @@ class Game:
         font_title = get_font(24, bold=True)
         font_sec = get_font(12, bold=True)
         font_small = get_font(11)
-        # Адаптивно к текущему размеру окна
-        W, H = self.screen.get_size()
+        # Логический размер (1280×720) — как и весь остальной рендер
+        W, H = self.LOGICAL_W, self.LOGICAL_H
         mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
-        header = pygame.Rect(30, 15, W - 60, 54)
+        layout = settings_layout(W, H)
+        header = layout.header
         draw_panel(self.screen, header)
         # Кнопка НАЗАД в шапке - всегда видна
-        btn_back_top = Button((header.x + 10, header.y + 12, 110, 30), "← НАЗАД", style="secondary")
+        btn_back_top = Button(layout.back, "← НАЗАД", style="secondary")
         btn_back_top.update(mouse, pressed)
         btn_back_top.draw(self.screen, get_font(11, bold=True))
         if btn_back_top.clicked:
@@ -1759,7 +1764,7 @@ class Game:
         self.screen.blit(ver, ver.get_rect(center=(W // 2, header.centery + 16)))
 
         # Левая панель — экран
-        left = pygame.Rect(30, 78, W // 2 - 40, H - 98)
+        left = layout.left
         draw_panel(self.screen, left)
         pygame.draw.rect(self.screen, (212, 175, 55, 40), left, width=1, border_radius=8)
         sec_title = font_sec.render("◆  ЭКРАН", True, COLOR_ACCENT)
@@ -1769,7 +1774,7 @@ class Game:
         )
 
         # Правая панель — звук и обновления
-        right = pygame.Rect(W // 2 + 10, 78, W // 2 - 40, H - 98)
+        right = layout.right
         draw_panel(self.screen, right)
         sec_title2 = font_sec.render("◆  ЗВУК И ОБНОВЛЕНИЯ", True, COLOR_ACCENT)
         self.screen.blit(sec_title2, (right.x + 20, right.y + 14))
@@ -1820,14 +1825,14 @@ class Game:
         self.screen.blit(lbl_mode, (left.x + 20, y))
         y += 18
         mode_labels = {
-            "windowed": "🗔  Оконный",
-            "fullscreen": "⛶  Полный экран",
-            "borderless": "▭  Без рамки",
+            "windowed": "Оконный",
+            "fullscreen": "Полный экран",
+            "borderless": "Без рамки",
         }
         mode_width = (left.w - 40 - 12) // 3
         mode_x = left.x + 20
         for i, (mid, label) in enumerate(
-            [("windowed", "🗔 Оконный"), ("fullscreen", "⛶ Экран"), ("borderless", "▭ Без рамки")]
+            [("windowed", "Оконный"), ("fullscreen", "Полный экран"), ("borderless", "Без рамки")]
         ):
             is_sel = self._pending_window_mode == mid
             style = "primary" if is_sel else "secondary"
@@ -1884,8 +1889,8 @@ class Game:
             self.screen.blit(dot, (left.x + 20, y))
         y += 22
         btn_apply = Button(
-            (left.x + 20, left.bottom - 48, left.w // 2 - 25, 38),
-            "✓  ПРИМЕНИТЬ",
+            layout.apply,
+            "ПРИМЕНИТЬ",
             style="primary" if has_changes else "secondary",
             enabled=has_changes,
         )
@@ -1893,9 +1898,7 @@ class Game:
         btn_apply.draw(self.screen, get_font(11, bold=True))
         if btn_apply.clicked and has_changes:
             self._apply_pending_settings()
-        btn_cancel = Button(
-            (left.centerx + 5, left.bottom - 48, left.w // 2 - 25, 38), "↺  СБРОСИТЬ"
-        )
+        btn_cancel = Button(layout.reset, "СБРОСИТЬ")
         btn_cancel.update(mouse, pressed)
         btn_cancel.draw(self.screen, get_font(11, bold=True))
         if btn_cancel.clicked:
@@ -1935,7 +1938,7 @@ class Game:
 
         # Кнопки обновлений
         btn_check = Button(
-            (right.x + 20, ry, right.w - 40, 38), "⟳  ПРОВЕРИТЬ ОБНОВЛЕНИЯ", style="secondary"
+            layout.check_updates, "ПРОВЕРИТЬ ОБНОВЛЕНИЯ", style="secondary"
         )
         btn_check.update(mouse, pressed)
         btn_check.draw(self.screen, get_font(11, bold=True))
@@ -2025,11 +2028,7 @@ class Game:
         ry += 100
 
         # Кнопка сброса прогресса — опасная
-        btn_wipe = Button(
-            (right.x + 20, right.bottom - 48, right.w - 40, 36),
-            "⚠  СБРОСИТЬ ПРОГРЕСС",
-            style="danger",
-        )
+        btn_wipe = Button(layout.wipe, "СБРОСИТЬ ПРОГРЕСС", style="danger")
         btn_wipe.update(mouse, pressed)
         btn_wipe.draw(self.screen, get_font(10, bold=True))
         if btn_wipe.clicked:
