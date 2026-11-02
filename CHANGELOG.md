@@ -6,6 +6,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.18] — 2026-11-02
+
+### Fixed
+- **Выбор монитора и режим экрана:** кнопка «Применить» была неактивна из-за ненадёжного флага `_settings_changed` — теперь `has_changes` сравнивает pending с сохранёнными настройками (разрешение/монитор/режим/звук). Добавлена синхронизация `pending` с дропдаунами на случай пропуска события.
+- **Монитор в windowed/borderless:** `apply_display_settings` теперь позиционирует окно через `SDL_VIDEO_WINDOW_POS` на выбранный монитор (с центром окна) с учётом `get_display_bounds`, работает на старых pygame без `display=` параметра. Гарантировано ограничение номера монитора в диапазоне.
+
+
 ## [0.1.17] — 2026-11-02
 
 ### Fixed
@@ -149,7 +156,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.17...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.18...HEAD
+[0.1.18]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.17...v0.1.18
 [0.1.17]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.15...v0.1.16
 [0.1.15]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.14...v0.1.15

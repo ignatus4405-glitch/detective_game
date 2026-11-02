@@ -1722,11 +1722,32 @@ class Game:
         self.screen.blit(hint2, (left.x + 20, y))
         y += 28
 
-        # Кнопки применения
+        # Синхронизируем pending с дропдаунами на случай если handle_event пропустил изменение
+        if self.resolution_dropdown.selected != self._pending_resolution:
+            self._pending_resolution = self.resolution_dropdown.selected
+            self._settings_changed = True
+        if self.monitor_dropdown.selected != self._pending_monitor:
+            self._pending_monitor = self.monitor_dropdown.selected
+            self._settings_changed = True
+
+        # Проверяем изменения надёжно — сравниваем pending с сохранёнными, а не только флаг
+        cur_w, cur_h = self.settings.get("resolution", [W, H])
+        if isinstance(cur_w, list):
+            cur_w, cur_h = cur_w[0], cur_w[1]
+        pending_res_str = self._pending_resolution
+        saved_res_str = f"{cur_w}x{cur_h}"
+        pending_mon_str = str(self._pending_monitor)
+        saved_mon_str = str(self.settings.get("monitor", 0))
+        pending_mode = self._pending_window_mode
+        saved_mode = self.settings.get("window_mode", "windowed")
         has_changes = (
             self._settings_changed
+            or pending_res_str != saved_res_str
+            or pending_mon_str != saved_mon_str
+            or pending_mode != saved_mode
             or self.sfx_slider.value != self.settings.get("sfx_volume", 0.7)
             or self.music_slider.value != self.settings.get("music_volume", 0.5)
+            or self.auto_update_toggle.checked != self.settings.get("auto_check_updates", True)
         )
         # Индикатор изменений
         if has_changes:
