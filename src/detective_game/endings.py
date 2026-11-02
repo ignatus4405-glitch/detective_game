@@ -48,10 +48,12 @@ def required_clues(case: Optional[Dict]) -> int:
 
 
 def can_accuse(state, case: Optional[Dict]) -> bool:
-    """Обвинять можно, как только есть хоть одна улика."""
+    """Обвинять можно, как только есть хоть одна улика (или ордер)."""
     case = case or {}
     if not (case.get("suspects") or []):
         return False
+    if getattr(state, "warrant", False):
+        return True
     return len(getattr(state, "collected_clues", None) or set()) >= MIN_CLUES_TO_ACCUSE
 
 
@@ -155,6 +157,14 @@ def _fallback(case: Dict, suspect: Optional[Dict]) -> Dict:
     }
 
 
+# ранг выше — если игрок восстановил хронологию перед обвинением
+RANK_UP = {"F": "D", "D": "C", "C": "B", "B": "A", "A": "S", "S": "S+", "S+": "S+"}
+
+
+def promote_rank(rank: str) -> str:
+    return RANK_UP.get(str(rank), str(rank))
+
+
 def resolve(case: Optional[Dict], state) -> Dict:
     """Итоговая концовка: подозреваемый + первый подходящий вариант."""
     case = case or {}
@@ -183,6 +193,9 @@ def resolve(case: Optional[Dict], state) -> Dict:
                 }
             )
             break
+    if result["success"] and getattr(state, "timeline_solved", False):
+        result["rank"] = promote_rank(result.get("rank", "F"))
+        result["timeline_bonus"] = True
     return result
 
 

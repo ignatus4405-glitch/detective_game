@@ -260,3 +260,73 @@ def test_escape_leaves_dialogue(game):
     ev = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE)
     assert game._dialogue_event(ev) is True
     assert game.screen_name == "location"
+
+
+# ── «уличить во лжи» и темы, открываемые доской ───────────────────
+
+
+def test_every_case_lie_mentions_real_clue():
+    for case in list_cases():
+        for char in case["characters"]:
+            for topic in char.get("dialogue", []):
+                spec = dialogue.lie(topic)
+                if not spec:
+                    continue
+                assert any(clue["id"] == spec["clue"] for clue in case["clues"])
+                assert spec["reply"]
+
+
+def test_expose_needs_clue_then_pays_trust_and_time():
+    case = load_case("missing_chess")
+    char = next(c for c in case["characters"] if c["id"] == "elena")
+    state = GameState()
+    result = dialogue.expose(state, char, 2, lambda cid: get_clue(case, cid))
+    assert result["status"] == "need_clue"
+    state.collected_clues = {"clue_camera"}
+    before = state.case_time_minutes
+    result = dialogue.expose(state, char, 2, lambda cid: get_clue(case, cid))
+    assert result["status"] == "ok"
+    assert state.exposed_lies["elena:2"] == result["reply"]
+    assert state.trust["elena"] >= 1
+    assert state.case_time_minutes == before + 5
+    again = dialogue.expose(state, char, 2, lambda cid: get_clue(case, cid))
+    assert again["status"] == "already"
+
+
+def test_expose_on_topic_without_lie():
+    case = load_case("missing_chess")
+    char = next(c for c in case["characters"] if c["id"] == "elena")
+    state = GameState()
+    state.collected_clues = {clue["id"] for clue in case["clues"]}
+    assert dialogue.expose(state, char, 0)["status"] == "no_lie"
+    assert dialogue.expose(state, char, 99)["status"] == "no_lie"
+
+
+def test_board_topics_are_locked_until_version_ready():
+    from detective_game import board
+
+    case = load_case("missing_chess")
+    roma = next(c for c in case["characters"] if c["id"] == "roma")
+    locked = [i for i, topic in enumerate(roma["dialogue"]) if topic.get("requires")]
+    assert locked, "у Ромы должна быть тема, открываемая доской"
+    index = locked[0]
+    topic = roma["dialogue"][index]
+    state = GameState()
+    state.collected_clues = {clue["id"] for clue in case["clues"]}
+    assert dialogue.topic_locked(topic, state, case)
+    assert "доске" in dialogue.lock_hint(topic, case)
+    for clue_id in board.suspect(case, "roma_sus")["evidence"]:
+        board.link(state, case, clue_id, "roma_sus")
+    assert not dialogue.topic_locked(topic, state, case)
+
+
+def test_tutorial_has_lie_on_smith():
+    case = load_case("tutorial")
+    smith = next(c for c in case["characters"] if c["id"] == "smith")
+    lies = [topic for topic in smith["dialogue"] if dialogue.lie(topic)]
+    assert lies
+    state = GameState()
+    state.collected_clues = {"clue_paw"}
+    index = smith["dialogue"].index(lies[0])
+    result = dialogue.expose(state, smith, index, lambda cid: get_clue(case, cid))
+    assert result["status"] == "ok"

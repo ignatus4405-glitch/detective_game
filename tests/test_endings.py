@@ -253,6 +253,13 @@ def test_map_accuse_button_opens_accusation(game, monkeypatch):
 
     game.draw()
 
+    # сначала предлагается восстановить хронологию — её можно пропустить
+    assert game.screen_name == "timeline"
+    game.draw()  # экран хронологии рисуется следующим кадром
+    skip = game.timeline_rects["skip"].center
+    game.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=skip)
+    )
     assert game.screen_name == "accusation"
     assert game.accusation_selected is None
 

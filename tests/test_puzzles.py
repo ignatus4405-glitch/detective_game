@@ -263,6 +263,18 @@ def test_open_and_solve_every_clue(game, case_id, clue_id, spec):
             game.strike_lockpick()
     elif pz.kind == "wires":
         game.cut_wire(pz.correct_wire)
+    elif pz.kind == "alibi":
+        for person, place in enumerate(pz.solution):
+            game.assign_puzzle_alibi(person, place)
+        game.submit_puzzle_grid()
+    elif pz.kind == "develop":
+        for name, target in pz.targets_dev.items():
+            game.adjust_puzzle_param(name, target - pz.params[name])
+        game.submit_puzzle_develop()
+    elif pz.kind == "align":
+        for target in pz.angle_targets:
+            pz.angle = target
+            game.strike_puzzle_align()
     else:
         pz.showing = False
         for name in pz.order:
@@ -297,3 +309,121 @@ def test_clue_without_puzzle_is_collected_directly(game):
     game.open_puzzle(clue)
     assert clue["id"] in game.state.collected_clues
     assert game.screen_name == "location"
+
+
+# ---------------------------------------------------------------------------
+# Новые типы: сетка алиби, проявка, совмещение
+# ---------------------------------------------------------------------------
+
+
+def test_alibi_grid_assigns_and_enforces_unique_places():
+    pz = Puzzle({"type": "alibi", "people": ["А", "Б", "В"], "places": ["1", "2", "3"]})
+    assert pz.kind == "alibi"
+    assert len(pz.people) == len(pz.places) == 3
+    assert pz.assign(0, 0) and pz.assignments[0] == 0
+    # место занято другим — прежний освобождается
+    pz.assign(1, 0)
+    assert pz.assignments[0] is None
+    assert pz.assignments[1] == 0
+    pz.clear_row(1)
+    assert pz.assignments[1] is None
+
+
+def test_alibi_facts_define_unique_solution():
+    pz = Puzzle({"type": "alibi", "difficulty": 1})
+    assert pz.facts
+    assert all("—" in fact for fact in pz.facts)
+    assert len(pz.facts) >= len(pz.people)
+
+
+def test_alibi_requires_full_grid_and_accepts_solution():
+    pz = Puzzle({"type": "alibi", "people": ["А", "Б", "В"], "places": ["1", "2", "3"]})
+    pz.assign(0, pz.solution[0])
+    assert pz.submit_grid() is False
+    assert "Заполните всех" in pz.message
+    for person, place in enumerate(pz.solution):
+        pz.assign(person, place)
+    assert pz.submit_grid() is True
+    assert pz.success
+
+
+def test_alibi_wrong_grid_costs_attempt():
+    pz = Puzzle({"type": "alibi", "people": ["А", "Б"], "places": ["1", "2"], "attempts": 2})
+    wrong = [1, 0]
+    for person, place in enumerate(wrong):
+        pz.assign(person, place)
+    assert pz.submit_grid() is False
+    assert pz.attempts_left == 1
+    assert all(item is None for item in pz.assignments)
+
+
+def test_develop_feedback_and_success():
+    pz = Puzzle({"type": "develop", "difficulty": 1, "targets": {"exposure": 50, "contrast": 30, "time": 70}})
+    feedback = pz.submit_develop()
+    assert set(feedback) == {"exposure", "contrast", "time"}
+    assert all(mark in {"=", "↑", "↓"} for mark in feedback.values())
+    assert not pz.success
+    for name, target in pz.targets_dev.items():
+        pz.adjust(name, target - pz.params[name])
+    feedback = pz.submit_develop()
+    assert set(feedback.values()) == {"="}
+    assert pz.success
+
+
+def test_develop_clamps_and_ignores_unknown_params():
+    pz = Puzzle({"type": "develop"})
+    pz.adjust("exposure", 999)
+    assert pz.params["exposure"] == 100
+    pz.adjust("exposure", -999)
+    assert pz.params["exposure"] == 0
+    pz.adjust("nope", 10)
+    assert "nope" not in pz.params
+
+
+def test_align_hits_and_misses():
+    pz = Puzzle({"type": "align", "difficulty": 1})
+    assert len(pz.angle_targets) == 3
+    for target in pz.angle_targets:
+        pz.angle = target
+        assert pz.strike_angle() is True
+    assert pz.success
+    assert pz.hits == 3
+
+
+def test_align_three_misses_fail():
+    pz = Puzzle({"type": "align", "difficulty": 3})
+    pz.angle = (pz.angle_targets[0] + 0.5) % 1.0
+    for _ in range(3):
+        pz.strike_angle()
+    assert pz.failed
+    assert pz.misses == pz.attempts_total
+
+
+def test_align_needle_moves_over_time():
+    pz = Puzzle({"type": "align", "difficulty": 1})
+    start = pz.angle
+    for _ in range(10):
+        pz.update(0.1)
+    assert pz.angle != start
+
+
+def test_new_puzzle_types_have_titles_and_hints():
+    for kind in ("alibi", "develop", "align"):
+        pz = Puzzle({"type": kind})
+        assert pz.title
+        assert pz.hint
+        assert difficulty_label(pz)
+
+
+def test_align_voice_mode_has_label():
+    pz = Puzzle({"type": "align", "mode": "voice", "difficulty": 1})
+    assert pz.align_mode == "voice"
+    assert pz.title
+
+
+def test_data_voice_clue_uses_align():
+    case = CASES["missing_chess"]
+    clue = get_clue(case, "clue_tape")
+    assert clue and clue["hidden"]
+    assert clue["puzzle"]["type"] == "align"
+    assert clue["puzzle"]["mode"] == "voice"

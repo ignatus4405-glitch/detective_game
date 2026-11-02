@@ -167,3 +167,120 @@ def _award_clue(state, clue_id, minutes, clue_lookup) -> Optional[Dict]:
     except (TypeError, ValueError):
         state.case_time_minutes += 10
     return clue
+
+
+# ── «уличить во лжи» ───────────────────────────────────────────────────
+
+DEFAULT_LIE_TRUST = 2
+DEFAULT_LIE_TIME = 5
+
+
+def lie(topic: Optional[Dict]) -> Optional[Dict]:
+    """Спецификация лжи в теме: ``{"clue", "reply", "claim", "trust"}``."""
+    raw = (topic or {}).get("lie") or {}
+    if not raw.get("clue") or not raw.get("reply"):
+        return None
+    return raw
+
+
+def lie_key(char_id: str, index: int) -> str:
+    return f"{char_id}:{index}"
+
+
+def lie_exposed(state, char_id: str, index: int) -> bool:
+    return lie_key(char_id, index) in (getattr(state, "exposed_lies", None) or {})
+
+
+def lie_reply(state, char_id: str, index: int) -> str:
+    return str((getattr(state, "exposed_lies", None) or {}).get(lie_key(char_id, index), ""))
+
+
+def lie_evidence(state, topic: Optional[Dict]) -> Optional[str]:
+    """Улика, которой можно уличить (её id), если она уже собрана."""
+    spec = lie(topic)
+    if not spec:
+        return None
+    clue_id = str(spec["clue"])
+    if clue_id in (getattr(state, "collected_clues", None) or set()):
+        return clue_id
+    return None
+
+
+def requires(topic: Optional[Dict]) -> Dict:
+    """Условия, при которых тема открывается."""
+    raw = (topic or {}).get("requires")
+    return raw if isinstance(raw, dict) else {}
+
+
+def topic_locked(topic: Optional[Dict], state, case: Optional[Dict] = None) -> bool:
+    """Закрыта ли тема (например, пока не собрана версия на доске).
+
+    ``"requires": {"board": true}`` — нужен любой собранный вывод,
+    ``{"board": "suspect_id"}`` — вывод именно по этому подозреваемому.
+    """
+    from . import board
+
+    req = requires(topic)
+    if not req or "board" not in req:
+        return False
+    target = req.get("board")
+    if target is True:
+        return not board.conclusions(case, state)
+    item = board.suspect(case, str(target))
+    if item is None:
+        return True
+    return board.conclusion_for(case, state, item) is None
+
+
+def lock_hint(topic: Optional[Dict], case: Optional[Dict] = None) -> str:
+    """Что сделать, чтобы тема открылась (для подсказки в допросе)."""
+    from . import board
+
+    target = requires(topic).get("board")
+    if target is True:
+        return "Нужна собранная версия на доске в блокноте"
+    item = board.suspect(case, str(target)) if case else None
+    if item is None:
+        return "Нужна собранная версия на доске в блокноте"
+    return f"Свяжите все улики с «{item.get('name')}» на доске версий"
+
+
+def expose(state, char: Dict, index: int, clue_lookup=None) -> Dict:
+    """Уличить персонажа во лжи, предъявив улику.
+
+    Возвращает ``{"status": ...}``: ``ok`` (пойман), ``already`` (уже),
+    ``need_clue`` (нужна улика), ``no_lie`` (в теме нет лжи).
+    """
+    topics = (char or {}).get("dialogue") or []
+    if not 0 <= index < len(topics):
+        return {"status": "no_lie"}
+    topic = topics[index]
+    spec = lie(topic)
+    if not spec:
+        return {"status": "no_lie"}
+    char_id = str(char.get("id", ""))
+    key = lie_key(char_id, index)
+    if key in (getattr(state, "exposed_lies", None) or {}):
+        return {"status": "already", "reply": lie_reply(state, char_id, index)}
+    clue_id = str(spec["clue"])
+    if clue_id not in (getattr(state, "collected_clues", None) or set()):
+        return {"status": "need_clue", "clue": clue_id}
+
+    if getattr(state, "exposed_lies", None) is None:
+        state.exposed_lies = {}
+    state.exposed_lies[key] = str(spec.get("reply", ""))
+    delta = int(spec.get("trust", DEFAULT_LIE_TRUST) or 0)
+    if delta:
+        if getattr(state, "trust", None) is None:
+            state.trust = {}
+        state.trust[char_id] = trust_of(state, char_id) + delta
+    minutes = int(spec.get("time", DEFAULT_LIE_TIME) or 0)
+    if minutes:
+        state.case_time_minutes = int(getattr(state, "case_time_minutes", 0) or 0) + minutes
+    _award_clue(state, spec.get("bonus_clue"), 0, clue_lookup)
+    return {
+        "status": "ok",
+        "reply": str(spec.get("reply", "")),
+        "trust_delta": delta,
+        "clue": spec.get("bonus_clue"),
+    }
