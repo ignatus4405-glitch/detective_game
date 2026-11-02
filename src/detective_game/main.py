@@ -5,7 +5,7 @@ import time
 
 import pygame
 
-from . import get_version_source
+from . import dialogue, get_version_source
 from .config import *
 from .data import case_map, get_clue, get_location, list_cases, load_case
 from .game_state import AVATARS, BACKGROUNDS, DetectiveProfile, GameState
@@ -498,6 +498,8 @@ class Game:
                 return
             if handle_tutorial_key(self, self.tutorial, event):
                 return
+            return
+        if self.screen_name == "dialogue" and self._dialogue_event(event):
             return
         # Глобально: дропдауны настроек — взаимоисключение и закрытие по клику в пустоту
         if self.screen_name == "settings" and hasattr(self, "resolution_dropdown"):
@@ -1465,8 +1467,23 @@ class Game:
                 self.screen.blit(txt, txt.get_rect(center=port.center))
                 name = get_font(13, bold=True).render(ch["name"], True, COLOR_TEXT)
                 self.screen.blit(name, (rect.x + 70, rect.y + 10))
-                role = get_font(11).render(ch["role"], True, COLOR_ACCENT)
-                self.screen.blit(role, (rect.x + 70, rect.y + 28))
+                trust = dialogue.trust_of(self.state, ch["id"])
+                role_x = rect.x + 70
+                if trust:
+                    role = get_font(11).render(ch["role"], True, COLOR_ACCENT)
+                    self.screen.blit(role, (role_x, rect.y + 28))
+                    chip_col = COLOR_GREEN if trust > 0 else (200, 100, 100)
+                    chip_text = get_font(10, bold=True).render(
+                        f"доверие {trust:+d}", True, chip_col
+                    )
+                    chip = pygame.Rect(0, 0, chip_text.get_width() + 14, 18)
+                    chip.topleft = (role_x + role.get_width() + 10, rect.y + 27)
+                    pygame.draw.rect(self.screen, (24, 26, 32), chip, border_radius=9)
+                    pygame.draw.rect(self.screen, chip_col, chip, width=1, border_radius=9)
+                    self.screen.blit(chip_text, (chip.x + 7, chip.y + 4))
+                else:
+                    role = get_font(11).render(ch["role"], True, COLOR_ACCENT)
+                    self.screen.blit(role, (role_x, rect.y + 28))
                 bio = get_font(10).render(ch["bio"][:50], True, COLOR_TEXT_DIM)
                 self.screen.blit(bio, (rect.x + 70, rect.y + 45))
                 # кнопка допроса
@@ -1484,13 +1501,80 @@ class Game:
             empty2 = get_font(12).render("Персонажей здесь нет.", True, COLOR_TEXT_DARK)
             self.screen.blit(empty2, (right.x, y))
 
-    def draw_dialogue(self):
-        if not self.dialogue_char:
-            self.screen_name = "location"
+    # ── интерактивный допрос ──────────────────────────────────────────────
+
+    def _dialogue_clue_lookup(self):
+        case = self.current_case or {}
+        return lambda clue_id: get_clue(case, clue_id)
+
+    def _dialogue_choose(self, ch, opt_index):
+        """Игрок выбрал реплику — эффекты, уведомления, сохранение."""
+        result = dialogue.choose(
+            self.state, ch, self.dialogue_idx, opt_index, self._dialogue_clue_lookup()
+        )
+        if not result:
             return
+        pygame.time.wait(120)
+        if result["clue"]:
+            self.add_notification(f"Улика: {result['clue']['title']}")
+        delta = result["trust_delta"]
+        if delta:
+            word = "выросло" if delta > 0 else "упало"
+            self.add_notification(f"{ch['name']}: доверие {word} ({delta:+d})")
+        save_game(self.state)
+
+    def _dialogue_next(self, ch):
+        """Следующая тема — или итог допроса с бонусом за доверие."""
+        topics = ch.get("dialogue", [])
+        pygame.time.wait(100)
+        if self.dialogue_idx + 1 < len(topics):
+            self.dialogue_idx += 1
+            return
+        self.dialogue_idx = len(topics)
+        bonus = dialogue.finish(self.state, ch, self._dialogue_clue_lookup())
+        if bonus:
+            self.add_notification(f"{ch['name']}: {bonus['text']}")
+            if bonus["clue"]:
+                self.add_notification(f"Улика: {bonus['clue']['title']}")
+        save_game(self.state)
+
+    def _dialogue_event(self, event):
+        """Клавиши допроса: 1–3 — реплика, пробел/Enter — далее, Esc — назад."""
+        if event.type != pygame.KEYDOWN:
+            return False
+        if event.key == pygame.K_ESCAPE:
+            self.screen_name = "location"
+            return True
         ch = self.dialogue_char
-        font_btn = get_font(13, bold=True)
-        # фон — иллюстрация места, где идёт разговор (сильно затемнённая)
+        if not ch:
+            return False
+        topics = ch.get("dialogue", [])
+        if event.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER):
+            if self.dialogue_idx >= len(topics):
+                self.screen_name = "location"
+                return True
+            topic = topics[self.dialogue_idx]
+            answered = dialogue.chosen_option(
+                self.state, ch["id"], self.dialogue_idx, topic
+            )
+            if answered or not dialogue.is_interactive(topic):
+                self._dialogue_next(ch)
+            else:
+                self.add_notification("Сначала выберите реплику — клавиши 1–3")
+            return True
+        if pygame.K_1 <= event.key <= pygame.K_3 and self.dialogue_idx < len(topics):
+            topic = topics[self.dialogue_idx]
+            opts = dialogue.options(topic)
+            index = event.key - pygame.K_1
+            if index < len(opts) and dialogue.chosen(
+                self.state, ch["id"], self.dialogue_idx
+            ) is None:
+                self._dialogue_choose(ch, index)
+                return True
+        return False
+
+    def _dialogue_backdrop(self, ch):
+        """Затемнённая иллюстрация места, где идёт разговор."""
         loc = get_location(self.current_case, ch.get("location", "")) if self.current_case else None
         if loc:
             art_name, art_tint = location_art(loc)
@@ -1501,134 +1585,312 @@ class Game:
             )
             if backdrop:
                 self.screen.blit(backdrop, (0, 0))
-        # затемнение
         overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 150))
         self.screen.blit(overlay, (0, 0))
-        # панель диалога
-        panel = pygame.Rect(60, 80, WINDOW_WIDTH - 120, WINDOW_HEIGHT - 160)
-        draw_panel(self.screen, panel)
-        # портрет большой: снимок персонажа, иначе цветная карточка с инициалом
-        port_rect = pygame.Rect(panel.x + 20, panel.y + 20, 100, 100)
-        pygame.draw.rect(self.screen, ch["portrait_color"], port_rect, border_radius=10)
-        portrait_art = cover_image(str(ch.get("portrait", "")), (port_rect.w, port_rect.h))
+
+    def _dialogue_portrait(self, ch, rect):
+        pygame.draw.rect(self.screen, ch["portrait_color"], rect, border_radius=10)
+        art = cover_image(str(ch.get("portrait", "")), (rect.w, rect.h))
         init = ch["name"][0]
-        if blit_rounded_image(self.screen, portrait_art, port_rect, radius=10):
-            # инициал поверх снимка — в тёмной плашке, чтобы не закрывал лицо
-            badge = pygame.Rect(port_rect.x + 6, port_rect.bottom - 30, 24, 24)
+        if blit_rounded_image(self.screen, art, rect, radius=10):
+            badge = pygame.Rect(rect.x + 6, rect.bottom - 28, 22, 22)
             pygame.draw.rect(self.screen, (12, 14, 20), badge, border_radius=5)
             pygame.draw.rect(self.screen, COLOR_ACCENT, badge, width=1, border_radius=5)
-            txt = get_font(15, bold=True).render(init, True, (240, 232, 208))
+            txt = get_font(14, bold=True).render(init, True, (240, 232, 208))
             self.screen.blit(txt, txt.get_rect(center=badge.center))
         else:
-            txt = get_font(38, bold=True).render(init, True, (255, 255, 255))
-            self.screen.blit(txt, txt.get_rect(center=port_rect.center))
-        pygame.draw.rect(self.screen, COLOR_ACCENT, port_rect, width=2, border_radius=10)
-        # имя и роль
+            txt = get_font(36, bold=True).render(init, True, (255, 255, 255))
+            self.screen.blit(txt, txt.get_rect(center=rect.center))
+        pygame.draw.rect(self.screen, COLOR_ACCENT, rect, width=2, border_radius=10)
+
+    def _dialogue_header(self, ch, panel):
+        port = pygame.Rect(panel.x + 20, panel.y + 18, 96, 96)
+        self._dialogue_portrait(ch, port)
         name = get_font(20, bold=True).render(ch["name"], True, COLOR_TEXT)
-        self.screen.blit(name, (port_rect.right + 15, panel.y + 30))
-        role = get_font(13).render(ch["role"] + " • " + ch["bio"], True, COLOR_ACCENT)
-        self.screen.blit(role, (port_rect.right + 15, panel.y + 55))
-        # допрос
-        dialogues = ch.get("dialogue", [])
-        if self.dialogue_idx < len(dialogues):
-            q = dialogues[self.dialogue_idx]
-            # вопрос
-            q_rect = pygame.Rect(panel.x + 20, panel.y + 130, panel.w - 40, 50)
-            draw_panel(self.screen, q_rect, color=COLOR_ACCENT, border=COLOR_ACCENT)
-            # детектив говорит: маленький снимок выбранного детектива
-            av_rect = pygame.Rect(q_rect.right - 58, q_rect.y + 5, 40, 40)
-            avatar_art = cover_image(
-                self.state.detective.avatar_id + ".png", (av_rect.w, av_rect.h)
-            )
-            if not blit_rounded_image(self.screen, avatar_art, av_rect, radius=6):
-                pygame.draw.rect(self.screen, (20, 20, 20), av_rect, border_radius=6)
-                av_init = get_font(18, bold=True).render(
-                    self.state.detective.name[:1], True, COLOR_ACCENT
+        self.screen.blit(name, (port.right + 16, panel.y + 24))
+        role = get_font(12).render(ch["role"], True, COLOR_ACCENT)
+        self.screen.blit(role, (port.right + 16, panel.y + 52))
+        bio_text = ch["bio"]
+        bio_font = get_font(11)
+        limit = panel.right - 290 - (port.right + 16)
+        while bio_text and bio_font.size(bio_text)[0] > limit:
+            bio_text = bio_text[:-1]
+        self.screen.blit(bio_font.render(bio_text, True, COLOR_TEXT_DIM), (port.right + 16, panel.y + 72))
+        # шкала доверия
+        trust = dialogue.trust_of(self.state, ch["id"])
+        badge = pygame.Rect(panel.right - 240, panel.y + 22, 220, 56)
+        draw_panel(self.screen, badge, color=(24, 26, 34), radius=8)
+        label = get_font(10, bold=True).render("ДОВЕРИЕ", True, COLOR_TEXT_DIM)
+        self.screen.blit(label, (badge.x + 14, badge.y + 8))
+        filled = dialogue.trust_pips(trust)
+        for i in range(5):
+            cx = badge.x + 22 + i * 22
+            cy = badge.y + 36
+            color = COLOR_ACCENT if i < filled else (58, 58, 70)
+            if trust < 0 and i < min(5, -trust):
+                color = (190, 90, 90)
+            pygame.draw.circle(self.screen, color, (cx, cy), 6)
+            pygame.draw.circle(self.screen, (14, 14, 18), (cx, cy), 6, width=1)
+        value_col = COLOR_GREEN if trust > 0 else ((200, 100, 100) if trust < 0 else COLOR_TEXT_DARK)
+        value = get_font(15, bold=True).render(f"{trust:+d}" if trust else "0", True, value_col)
+        self.screen.blit(value, value.get_rect(midright=(badge.right - 14, badge.centery + 4)))
+        pygame.draw.line(
+            self.screen, (40, 40, 50),
+            (panel.x + 20, panel.y + 126), (panel.right - 20, panel.y + 126), 1,
+        )
+
+    def _dialogue_speech(self, rect, who, text, accent=False, text_color=None):
+        """Плашка с репликой: имя говорящего и текст (с переносами)."""
+        if accent:
+            draw_panel(self.screen, rect, color=COLOR_ACCENT, border=COLOR_ACCENT, radius=8)
+            color = (12, 12, 12)
+        else:
+            draw_panel(self.screen, rect, color=(28, 28, 36), border=(52, 52, 64), radius=8)
+            color = text_color or COLOR_TEXT
+        font = get_font(11, bold=True)
+        self.screen.blit(font.render(who.upper(), True, color), (rect.x + 14, rect.y + 8))
+        draw_text_wrapped(
+            self.screen,
+            text,
+            get_font(13),
+            color,
+            pygame.Rect(rect.x + 14, rect.y + 26, rect.w - 28, rect.h - 32),
+        )
+
+    def _dialogue_option_rects(self, panel, count):
+        return [
+            pygame.Rect(panel.x + 22, panel.y + 264 + i * 62, panel.w - 44, 54)
+            for i in range(count)
+        ]
+
+    def _dialogue_option_button(self, rect, number, option, hovered):
+        bg = (46, 42, 26) if hovered else (30, 30, 38)
+        border = COLOR_ACCENT if hovered else (58, 58, 72)
+        draw_panel(self.screen, rect, color=bg, border=border, radius=8)
+        badge = pygame.Rect(rect.x + 10, rect.y + 12, 30, 30)
+        pygame.draw.rect(self.screen, COLOR_ACCENT if hovered else (44, 44, 56), badge, border_radius=6)
+        num = get_font(15, bold=True).render(str(number), True, (14, 14, 18) if hovered else COLOR_TEXT)
+        self.screen.blit(num, num.get_rect(center=badge.center))
+        text_font = get_font(13)
+        text = option["text"]
+        while text and text_font.size(text)[0] > rect.w - 190:
+            text = text[:-1]
+        self.screen.blit(text_font.render(text, True, COLOR_TEXT), (badge.right + 12, rect.y + 10))
+        if option.get("clue"):
+            tag = get_font(9, bold=True).render("УЛИКА", True, (14, 14, 18))
+            tag_rect = pygame.Rect(rect.x + 12 + 30 + 12, rect.y + 33, tag.get_width() + 12, 15)
+            pygame.draw.rect(self.screen, (170, 190, 120), tag_rect, border_radius=4)
+            self.screen.blit(tag, (tag_rect.x + 6, tag_rect.y + 2))
+            tip = get_font(9).render("может дать улику", True, COLOR_TEXT_DARK)
+            self.screen.blit(tip, (tag_rect.right + 8, tag_rect.y + 1))
+        tone = option.get("tone")
+        if tone:
+            tone_col = {"мягко": COLOR_GREEN, "жёстко": (200, 110, 100)}.get(tone, COLOR_TEXT_DIM)
+            tone_txt = get_font(10, bold=True).render(str(tone).upper(), True, tone_col)
+            self.screen.blit(tone_txt, tone_txt.get_rect(midright=(rect.right - 16, rect.centery)))
+
+    def _draw_dialogue_topic(self, ch, panel, topic):
+        total = len(ch.get("dialogue", []))
+        index = self.dialogue_idx
+        label = get_font(10, bold=True).render(
+            f"ТЕМА {index + 1} ИЗ {total}", True, COLOR_TEXT_DARK
+        )
+        self.screen.blit(label, (panel.x + 22, panel.y + 138))
+        opts = dialogue.options(topic)
+        top = panel.y + 158
+        if opts:
+            prompt = dialogue.prompt(topic)
+            if prompt:
+                self._dialogue_speech(
+                    pygame.Rect(panel.x + 22, top, panel.w - 44, 78),
+                    ch["name"],
+                    prompt,
                 )
-                self.screen.blit(av_init, av_init.get_rect(center=av_rect.center))
-            pygame.draw.rect(self.screen, (10, 10, 10), av_rect, width=1, border_radius=6)
-            det_name = get_font(11, bold=True).render(
-                self.state.detective.name.upper() + " :", True, (10, 10, 10)
-            )
-            self.screen.blit(det_name, (q_rect.x + 12, q_rect.y + 8))
-            q_text = get_font(13, bold=True).render(q["q"], True, (10, 10, 10))
-            q_text = q_text.subsurface(
-                pygame.Rect(
-                    0, 0, max(1, min(q_text.get_width(), q_rect.w - 90)), q_text.get_height()
+            chosen = dialogue.chosen_option(self.state, ch["id"], index, topic)
+            if chosen is None:
+                hint = get_font(11, bold=True).render(
+                    "ВЫБЕРИТЕ, ЧТО СКАЗАТЬ (клик или 1–3):", True, COLOR_ACCENT
                 )
+                self.screen.blit(hint, (panel.x + 22, panel.y + 244))
+                mouse = self._to_logical(pygame.mouse.get_pos())
+                for i, option in enumerate(opts):
+                    rect = self._dialogue_option_rects(panel, len(opts))[i]
+                    hovered = rect.collidepoint(mouse)
+                    self._dialogue_option_button(rect, i + 1, option, hovered)
+                    if hovered and self._click_once():
+                        self._dialogue_choose(ch, i)
+                return
+            self._dialogue_speech(
+                pygame.Rect(panel.x + 22, top + 88, panel.w - 44, 54),
+                self.state.detective.name,
+                chosen["text"],
+                accent=True,
             )
-            self.screen.blit(q_text, (q_rect.x + 12, q_rect.y + 26))
-            # ответ
-            a_rect = pygame.Rect(panel.x + 20, q_rect.bottom + 15, panel.w - 40, 120)
-            draw_panel(self.screen, a_rect, color=(30, 30, 40))
+            self._dialogue_speech(
+                pygame.Rect(panel.x + 22, top + 152, panel.w - 44, 124),
+                ch["name"],
+                chosen.get("reply", ""),
+            )
+            self._draw_dialogue_effects(ch, chosen, panel.y + 440)
+            return
+        # старая тема без выбора — просто вопрос и ответ
+        self._dialogue_speech(
+            pygame.Rect(panel.x + 22, top, panel.w - 44, 56),
+            self.state.detective.name,
+            topic.get("q", ""),
+            accent=True,
+        )
+        self._dialogue_speech(
+            pygame.Rect(panel.x + 22, top + 70, panel.w - 44, 130),
+            ch["name"],
+            topic.get("a", ""),
+        )
+
+    def _draw_dialogue_effects(self, ch, option, y):
+        """Чипы эффектов выбранной реплики: доверие, улика, время."""
+        x = 82
+        delta = int(option.get("trust", 0) or 0)
+        chips = []
+        if delta:
+            word = f"доверие {delta:+d}"
+            chips.append((word, COLOR_GREEN if delta > 0 else (200, 100, 100)))
+        if option.get("clue"):
+            chips.append(("получена улика", COLOR_ACCENT))
+        chips.append((f"время +{int(option.get('time', 10) or 10)} мин", COLOR_TEXT_DIM))
+        font = get_font(10, bold=True)
+        for text, color in chips:
+            width = font.size(text)[0] + 20
+            rect = pygame.Rect(x, y, width, 22)
+            pygame.draw.rect(self.screen, (26, 26, 34), rect, border_radius=11)
+            pygame.draw.rect(self.screen, color, rect, width=1, border_radius=11)
+            self.screen.blit(font.render(text, True, color), (rect.x + 10, rect.y + 5))
+            x += width + 10
+        trust = dialogue.trust_of(self.state, ch["id"])
+        bonus = dialogue.trust_bonus(ch)
+        if bonus:
+            need = dialogue.bonus_min(ch)
+            tip = (
+                f"Доверие {trust}/{need} — {ch['name']} уже готов говорить откровеннее."
+                if trust >= need
+                else f"Бонус откровенности — при доверии {need}. Сейчас {trust}."
+            )
+            self.screen.blit(
+                get_font(10).render(tip, True, COLOR_TEXT_DARK), (x + 6, y + 6)
+            )
+
+    def _draw_dialogue_summary(self, ch, panel):
+        topics = ch.get("dialogue", [])
+        answered = sum(
+            1
+            for i, topic in enumerate(topics)
+            if not dialogue.is_interactive(topic)
+            or dialogue.chosen(self.state, ch["id"], i) is not None
+        )
+        trust = dialogue.trust_of(self.state, ch["id"])
+        rect = pygame.Rect(panel.x + 22, panel.y + 158, panel.w - 44, 232)
+        draw_panel(self.screen, rect, color=(26, 26, 34), radius=10)
+        title = get_font(18, bold=True).render("ДОПРОС ОКОНЧЕН", True, COLOR_ACCENT)
+        self.screen.blit(title, (rect.x + 20, rect.y + 18))
+        info = get_font(12).render(
+            f"Тем закрыто: {answered} из {len(topics)}  •  доверие: {trust:+d}"
+            if trust
+            else f"Тем закрыто: {answered} из {len(topics)}  •  доверие: 0",
+            True,
+            COLOR_TEXT_DIM,
+        )
+        self.screen.blit(info, (rect.x + 20, rect.y + 46))
+        bonus = dialogue.trust_bonus(ch)
+        if bonus and ch["id"] in (self.state.trust_bonus_taken or set()):
+            head = get_font(12, bold=True).render("ЗА ДОВЕРИЕ:", True, COLOR_GREEN)
+            self.screen.blit(head, (rect.x + 20, rect.y + 84))
             draw_text_wrapped(
                 self.screen,
-                q["a"],
-                get_font(14),
-                COLOR_TEXT,
-                pygame.Rect(a_rect.x + 15, a_rect.y + 15, a_rect.w - 30, a_rect.h - 30),
+                bonus["text"],
+                get_font(13),
+                (210, 220, 200),
+                pygame.Rect(rect.x + 20, rect.y + 106, rect.w - 40, rect.h - 130),
             )
-            # бэкграунд бонус
-            if self.state.detective.background == "ex_cop" and ch["location"] == "police":
-                bonus = get_font(11).render(
-                    "Бонус «Бывший коп»: Сержант Грей делится дополнительным протоколом.",
-                    True,
-                    COLOR_GREEN,
-                )
-                self.screen.blit(bonus, (panel.x + 20, a_rect.bottom + 10))
-            elif self.state.detective.background == "reporter" and ch["id"] == "barmen":
-                bonus2 = get_font(11).render(
-                    "Бонус «Репортёр»: Бармен рассказывает больше — вы умеете разговорить.",
-                    True,
-                    COLOR_GREEN,
-                )
-                self.screen.blit(bonus2, (panel.x + 20, a_rect.bottom + 10))
+        elif bonus:
+            need = dialogue.bonus_min(ch)
+            tip_rect = pygame.Rect(rect.x + 20, rect.y + 84, rect.w - 40, 60)
+            draw_panel(self.screen, tip_rect, color=(30, 30, 40), radius=8)
+            draw_text_wrapped(
+                self.screen,
+                "Если бы вы были мягче, разговор дал бы больше: "
+                f"для бонуса нужно доверие {need} (сейчас {trust}).",
+                get_font(12),
+                COLOR_TEXT_DIM,
+                pygame.Rect(tip_rect.x + 12, tip_rect.y + 10, tip_rect.w - 24, tip_rect.h - 20),
+            )
         else:
-            end_rect = pygame.Rect(panel.x + 20, panel.y + 130, panel.w - 40, 100)
-            draw_panel(self.screen, end_rect, color=(30, 30, 40))
-            end_text = get_font(14).render(
-                "Допрос окончен. Вы узнали всё, что он мог рассказать.", True, COLOR_TEXT_DIM
+            hint = get_font(12).render(
+                "Вы узнали всё, что он мог рассказать.", True, COLOR_TEXT_DIM
             )
-            self.screen.blit(end_text, end_text.get_rect(center=end_rect.center))
-            # возможная улика после допроса — проверим
-            # если это Рома и у нас есть ticket — можно дать ключ
-            if ch["id"] == "roma" and "clue_ticket" in self.state.collected_clues:
-                clue_extra = get_font(12).render(
-                    "Получена наводка: Ключ в порту, ящик у 3-го причала!", True, COLOR_ACCENT
-                )
-                self.screen.blit(clue_extra, (panel.x + 20, end_rect.bottom + 10))
-        # кнопки
-        y_btn = panel.bottom - 50
-        if self.dialogue_idx < len(dialogues):
-            btn_next = Button((panel.right - 200, y_btn, 180, 40), "ДАЛЕЕ →", accent=True)
-            mouse = self._to_logical(pygame.mouse.get_pos())
-            pressed = pygame.mouse.get_pressed()[0]
-            btn_next.update(mouse, pressed)
-            btn_next.draw(self.screen, font_btn)
-            if btn_next.clicked:
-                pygame.time.wait(150)
-                self.dialogue_idx += 1
-            btn_back = Button((panel.x + 20, y_btn, 120, 40), "← НАЗАД")
-            btn_back.update(mouse, pressed)
-            btn_back.draw(self.screen, font_btn)
-            if btn_back.clicked:
-                pygame.time.wait(150)
+            self.screen.blit(hint, (rect.x + 20, rect.y + 90))
+
+    def _draw_dialogue_buttons(self, ch, panel, topics, font_btn):
+        y = panel.bottom - 52
+        mouse = self._to_logical(pygame.mouse.get_pos())
+        back = Button((panel.x + 20, y, 120, 40), "← НАЗАД")
+        back.update(mouse, pygame.mouse.get_pressed()[0])
+        back.draw(self.screen, font_btn)
+        if back.clicked and self._click_once():
+            pygame.time.wait(120)
+            self.screen_name = "location"
+        finished = self.dialogue_idx >= len(topics)
+        if finished:
+            close = Button((panel.right - 210, y, 190, 40), "ЗАВЕРШИТЬ", accent=True)
+            close.update(mouse, pygame.mouse.get_pressed()[0])
+            close.draw(self.screen, font_btn)
+            if close.clicked and self._click_once():
+                pygame.time.wait(120)
                 self.screen_name = "location"
         else:
-            btn_close = Button((panel.right - 200, y_btn, 180, 40), "ЗАВЕРШИТЬ", accent=True)
-            mouse = self._to_logical(pygame.mouse.get_pos())
-            pressed = pygame.mouse.get_pressed()[0]
-            btn_close.update(mouse, pressed)
-            btn_close.draw(self.screen, font_btn)
-            if btn_close.clicked:
-                pygame.time.wait(150)
-                self.screen_name = "location"
-        # прогресс диалога
-        prog = get_font(11).render(
-            f"{min(self.dialogue_idx + 1, len(dialogues))}/{len(dialogues)}", True, COLOR_TEXT_DARK
+            topic = topics[self.dialogue_idx]
+            ready = (
+                not dialogue.is_interactive(topic)
+                or dialogue.chosen(self.state, ch["id"], self.dialogue_idx) is not None
+            )
+            rect = pygame.Rect(panel.right - 210, y, 190, 40)
+            hovered = rect.collidepoint(mouse)
+            if ready:
+                nxt = Button(rect, "ДАЛЕЕ →", accent=True)
+                nxt.update(mouse, pygame.mouse.get_pressed()[0])
+                nxt.draw(self.screen, font_btn)
+                if nxt.clicked and self._click_once():
+                    self._dialogue_next(ch)
+            else:
+                pygame.draw.rect(self.screen, (44, 44, 54), rect, border_radius=6)
+                pygame.draw.rect(self.screen, (60, 60, 74), rect, width=1, border_radius=6)
+                label = font_btn.render("ДАЛЕЕ →", True, (110, 110, 124))
+                self.screen.blit(label, label.get_rect(center=rect.center))
+                if hovered and pygame.mouse.get_pressed()[0]:
+                    self._click_once()
+                    self.add_notification("Сначала выберите реплику")
+        progress = get_font(11).render(
+            f"{min(self.dialogue_idx + 1, len(topics))}/{len(topics)}",
+            True,
+            COLOR_TEXT_DARK,
         )
-        self.screen.blit(prog, prog.get_rect(center=(panel.centerx, y_btn + 20)))
+        self.screen.blit(progress, progress.get_rect(center=(panel.centerx, y + 20)))
+
+    def draw_dialogue(self):
+        if not self.dialogue_char:
+            self.screen_name = "location"
+            return
+        ch = self.dialogue_char
+        font_btn = get_font(13, bold=True)
+        self._dialogue_backdrop(ch)
+        panel = pygame.Rect(60, 80, WINDOW_WIDTH - 120, WINDOW_HEIGHT - 160)
+        draw_panel(self.screen, panel)
+        self._dialogue_header(ch, panel)
+        topics = ch.get("dialogue", [])
+        if self.dialogue_idx < len(topics):
+            self._draw_dialogue_topic(ch, panel, topics[self.dialogue_idx])
+        else:
+            self._draw_dialogue_summary(ch, panel)
+        self._draw_dialogue_buttons(ch, panel, topics, font_btn)
 
     def draw_notebook(self):
         font_title = get_font(20, bold=True)

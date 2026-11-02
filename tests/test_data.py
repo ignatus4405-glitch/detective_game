@@ -105,11 +105,20 @@ def test_location_art_files_exist():
 
 
 def test_dialogues_are_long_enough():
-    """Больше диалогов: у каждого персонажа минимум 3 реплики."""
+    """Больше диалогов: у каждого персонажа минимум 3 темы.
+
+    Тема — либо старая пара «вопрос/ответ», либо интерактивная тема с
+    репликой персонажа и вариантами ответа детектива.
+    """
     for case in list_cases():
         assert len(case["characters"]) >= 2, f"{case['id']}: мало персонажей"
         for ch in case["characters"]:
-            lines = ch.get("dialogue", [])
-            assert len(lines) >= 3, f"{case['id']}/{ch['id']}: всего {len(lines)} реплик"
-            for line in lines:
-                assert line.get("q") and line.get("a")
+            topics = ch.get("dialogue", [])
+            assert len(topics) >= 3, f"{case['id']}/{ch['id']}: всего {len(topics)} тем"
+            for topic in topics:
+                if topic.get("options"):
+                    assert topic.get("prompt"), f"{case['id']}/{ch['id']}: тема без prompt"
+                    for option in topic["options"]:
+                        assert option.get("text") and option.get("reply")
+                else:
+                    assert topic.get("q") and topic.get("a")
