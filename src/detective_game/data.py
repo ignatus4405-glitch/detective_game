@@ -2,6 +2,7 @@
 import json
 from typing import Dict, List, Optional
 
+from .case_topics import INTERACTIVE_TOPICS, TRUST_BONUSES
 from .config import CASES_DIR
 
 # Карта по умолчанию: у старых дел поля "map" может не быть.
@@ -226,6 +227,26 @@ def get_location(case: Dict, loc_id: str) -> Optional[Dict]:
         if loc["id"] == loc_id:
             return loc
     return None
+
+def _merge_interactive_topics(cases: List[Dict]) -> None:
+    """Добавить темы с выбором реплик и бонусы за доверие.
+
+    Темы идут первыми, старые линейные вопросы остаются следом — игрок
+    видит и новые выборы, и прежние сюжетные реплики.
+    """
+    for case in cases:
+        for char in case.get("characters", []):
+            extra = INTERACTIVE_TOPICS.get((case["id"], char.get("id")))
+            if extra:
+                legacy = [t for t in char.get("dialogue", []) if t.get("q")]
+                char["dialogue"] = [dict(topic) for topic in extra] + legacy
+            bonus = TRUST_BONUSES.get((case["id"], char.get("id")))
+            if bonus:
+                char["trust_bonus"] = dict(bonus)
+
+
+_merge_interactive_topics(BUILTIN_CASES)
+
 
 def get_clue(case: Dict, clue_id: str) -> Optional[Dict]:
     for cl in case.get("clues", []):

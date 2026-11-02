@@ -77,6 +77,10 @@ class GameState:
     accusation_result: Optional[str] = None
     accusation_correct: Optional[bool] = None
     notes: list = field(default_factory=list)
+    # допросы: какие реплики выбраны, доверие персонажей, выданные бонусы
+    dialogue_choices: dict = field(default_factory=dict)  # "char_id:тема" -> индекс реплики
+    trust: dict = field(default_factory=dict)  # char_id -> доверие
+    trust_bonus_taken: set = field(default_factory=set)
     # meta
     total_playtime: float = 0.0
 
@@ -85,6 +89,7 @@ class GameState:
         d["visited_locations"] = list(self.visited_locations)
         d["collected_clues"] = list(self.collected_clues)
         d["interrogated"] = list(self.interrogated)
+        d["trust_bonus_taken"] = list(self.trust_bonus_taken)
         # dataclass nested
         return d
 
@@ -103,6 +108,9 @@ class GameState:
             accusation_result=data.get("accusation_result"),
             accusation_correct=data.get("accusation_correct"),
             notes=data.get("notes", []),
+            dialogue_choices=dict(data.get("dialogue_choices", {}) or {}),
+            trust={k: int(v) for k, v in (data.get("trust", {}) or {}).items()},
+            trust_bonus_taken=set(data.get("trust_bonus_taken", []) or []),
             total_playtime=data.get("total_playtime", 0.0),
         )
         return obj
