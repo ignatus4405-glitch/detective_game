@@ -37,7 +37,7 @@
 | `save_system.py` | Кроссплатформенные сохранения в `APPDATA`/`.local/share` — JSON |
 | `updater.py` | `check_for_updates()` → GitHub API, `UpdateChecker` (thread) |
 | `data.py` | `BUILTIN_CASES`, `load_case()`, `list_cases()`, геттеры |
-| `synth.py` | Синтез музыки и эффектов в WAV на чистом stdlib (5 тем, 9 sfx) |
+| `synth.py` | Синтез музыки и эффектов в WAV на чистом stdlib (10 тем, 9 sfx) |
 | `audio.py` | `AudioEngine`: темы по экранам, кэш `<save>/music`, фоновая генерация, `play_voice()` |
 | `puzzles.py` | `Puzzle` — логика четырёх головоломок, `for_clue()`, `difficulty_label()` |
 | `ui/puzzle_view.py` | Экран головоломки: отрисовка и обработка кликов/клавиш |

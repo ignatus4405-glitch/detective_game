@@ -83,6 +83,8 @@ class GameState:
     trust_bonus_taken: set = field(default_factory=set)
     # открытые концовки: id дела -> ["дело:подозреваемый:вариант", ...]
     unlocked_endings: dict = field(default_factory=dict)
+    # успешно закрытые дела — для галочки «ПРОЙДЕНО» и кнопки «СЛЕДУЮЩЕЕ ДЕЛО»
+    completed_cases: set = field(default_factory=set)
     # meta
     total_playtime: float = 0.0
 
@@ -93,6 +95,7 @@ class GameState:
         d["interrogated"] = list(self.interrogated)
         d["trust_bonus_taken"] = list(self.trust_bonus_taken)
         d["unlocked_endings"] = {k: list(v) for k, v in self.unlocked_endings.items()}
+        d["completed_cases"] = list(self.completed_cases)
         # dataclass nested
         return d
 
@@ -117,6 +120,7 @@ class GameState:
             unlocked_endings={
                 str(k): list(v) for k, v in (data.get("unlocked_endings", {}) or {}).items()
             },
+            completed_cases=set(data.get("completed_cases", []) or []),
             total_playtime=data.get("total_playtime", 0.0),
         )
         return obj

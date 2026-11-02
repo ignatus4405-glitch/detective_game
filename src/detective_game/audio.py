@@ -25,7 +25,18 @@ from . import synth
 from .config import IMAGES_DIR  # noqa: F401  (держит единый импорт конфигурации)
 from .save_system import ensure_save_dir
 
-MUSIC_TRACKS = ("noir", "investigation", "tension", "success", "failure")
+MUSIC_TRACKS = (
+    "noir",
+    "investigation",
+    "tension",
+    "success",
+    "failure",
+    "lounge",
+    "harbor",
+    "precinct",
+    "mystery",
+    "chase",
+)
 SFX_NAMES = tuple(synth.SFX.keys())
 
 # где искать озвучку (файлы кладутся рядом с игрой, не в кэш)
