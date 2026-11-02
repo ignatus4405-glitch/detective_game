@@ -87,6 +87,23 @@ def _cover(img: pygame.Surface, size: Tuple[int, int]) -> pygame.Surface:
     return out
 
 
+def _blit_rounded(surface, img: Optional[pygame.Surface], rect: pygame.Rect, radius: int = 6) -> bool:
+    """Кладёт картинку в прямоугольник с закруглёнными углами.
+
+    Без маски фото ложится «квадратом» поверх панели с радиусом и торчит
+    углами — заметно на маленьких превью вроде карты в блокноте.
+    """
+    if img is None:
+        return False
+    layer = pygame.Surface(rect.size, pygame.SRCALPHA)
+    layer.blit(img, (0, 0))
+    mask = pygame.Surface(rect.size, pygame.SRCALPHA)
+    pygame.draw.rect(mask, (255, 255, 255, 255), mask.get_rect(), border_radius=radius)
+    layer.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+    surface.blit(layer, rect.topleft)
+    return True
+
+
 def _panel(surface, rect, bg=COLOR_PANEL, border=COLOR_BORDER, radius=10, width=1):
     pygame.draw.rect(surface, bg, rect, border_radius=radius)
     pygame.draw.rect(surface, border, rect, width=width, border_radius=radius)
@@ -566,14 +583,31 @@ def _draw_notebook(game, layout: TutorialLayout, state: TutorialState) -> None:
             _text(screen, get_font(10), note[:70], COLOR_TEXT_DIM, (avatar.right + 10, row.y + 20))
     else:
         mini = pygame.Rect(body.x + 14, top, int(body.w * 0.55), body.bottom - top - 14)
-        pygame.draw.rect(screen, (18, 22, 30), mini, border_radius=6)
+        # Фон — та же карта города, что и в главе «Карта города»: пустой
+        # прямоугольник читался как «карта не отобразилась».
+        drawn = _blit_rounded(screen, _image("city_map.jpg", (mini.w, mini.h), dim=0.62), mini)
+        if not drawn:
+            pygame.draw.rect(screen, (18, 22, 30), mini, border_radius=6)
+        else:
+            # лёгкая вуаль: карта не должна спорить с пинами и подписями
+            veil = pygame.Surface((mini.w, mini.h), pygame.SRCALPHA)
+            veil.fill((10, 14, 26, 60))
+            screen.blit(veil, mini.topleft)
         pygame.draw.rect(screen, COLOR_BORDER, mini, width=1, border_radius=6)
+        previous_clip = screen.get_clip()
+        screen.set_clip(mini.inflate(-4, -4))
         for i, loc in enumerate(TRAINING_LOCATIONS):
             cx = mini.x + int(loc.x * mini.w)
             cy = mini.y + int(loc.y * mini.h)
-            pygame.draw.circle(screen, (212, 175, 55) if i == 0 else (80, 96, 124), (cx, cy), 7)
-            pygame.draw.circle(screen, (220, 220, 230), (cx, cy), 7, width=1)
-            _text(screen, get_font(9), loc.name, COLOR_TEXT_DIM, (cx + 10, cy - 6))
+            pygame.draw.circle(screen, (0, 0, 0), (cx + 2, cy + 2), 9)
+            pygame.draw.circle(screen, (212, 175, 55) if i == 0 else (86, 110, 146), (cx, cy), 7)
+            pygame.draw.circle(screen, (225, 225, 235), (cx, cy), 7, width=1)
+            label = render_text(get_font(9), loc.name, COLOR_TEXT)
+            badge = pygame.Surface((label.get_width() + 6, label.get_height() + 2), pygame.SRCALPHA)
+            pygame.draw.rect(badge, (0, 0, 0, 180), badge.get_rect(), border_radius=3)
+            screen.blit(badge, (cx + 9, cy - 7))
+            screen.blit(label, (cx + 12, cy - 6))
+        screen.set_clip(previous_clip)
         _text(
             screen,
             get_font(11),
