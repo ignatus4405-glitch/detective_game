@@ -330,3 +330,130 @@ def settings_layout(width: int = 1280, height: int = 720) -> SettingsLayout:
         right_bottom=wipe.y,
         check_updates=check_updates,
     )
+
+
+@dataclass
+class MapLayout:
+    """Макет экрана карты: пины рисуются и ловят клики в одних и тех же точках.
+
+    Раньше `draw_map` масштабировал координаты локации внутрь панели карты,
+    а `handle_event` проверял расстояние до исходных координат дела. На
+    масштабе 1280×720 это давало промах на 100+ пикселей — «кликаю по локации,
+    а ничего не происходит».
+    """
+
+    width: int
+    height: int
+    header: pygame.Rect
+    map_rect: pygame.Rect
+    right: pygame.Rect
+    hint: pygame.Rect
+    btn_notebook: pygame.Rect
+    btn_dossier: pygame.Rect
+    btn_accuse: pygame.Rect
+    btn_menu: pygame.Rect
+    btn_save: pygame.Rect
+    location_ids: List[str] = field(default_factory=list)
+    pins: List[pygame.Rect] = field(default_factory=list)
+    world_size: Tuple[int, int] = (1280, 720)
+
+    def pin_at(self, pos) -> Optional[str]:
+        """ID локации под точкой (логические координаты) или None."""
+        if not pos:
+            return None
+        for loc_id, rect in zip(self.location_ids, self.pins, strict=False):
+            if rect.collidepoint(pos):
+                return loc_id
+        return None
+
+    def pin_center(self, loc_id: str) -> Optional[Point]:
+        for cid, rect in zip(self.location_ids, self.pins, strict=False):
+            if cid == loc_id:
+                return rect.center
+        return None
+
+
+def map_layout(
+    width: int = 1280,
+    height: int = 720,
+    locations: Sequence[dict] = (),
+    *,
+    pin_radius: int = 18,
+    world: Tuple[int, int] = (1280, 720),
+) -> MapLayout:
+    """Раскладка карты города: шапка, панель карты, журнал, пины локаций."""
+    width = max(800, int(width))
+    height = max(600, int(height))
+    margin = max(12, int(width * 0.016))
+    header_h = max(44, int(height * 0.07))
+    header = pygame.Rect(margin, margin, width - 2 * margin, header_h)
+
+    top = header.bottom + max(8, int(height * 0.011))
+    bottom = height - margin
+    right_w = max(200, int(width * 0.212))
+    map_rect = pygame.Rect(
+        margin, top, width - margin - right_w - margin, max(120, bottom - top)
+    )
+    right = pygame.Rect(width - margin - right_w, top, right_w, max(120, bottom - top))
+
+    btn_w, btn_h, btn_gap = int(width * 0.078), int(header_h * 0.62), int(width * 0.008)
+    accuse_x = header.right - btn_w - 12
+    dossier_x = accuse_x - btn_w - btn_gap
+    notebook_x = dossier_x - btn_w - btn_gap
+    btn_y = header.y + (header.h - btn_h) // 2
+    btn_notebook = pygame.Rect(notebook_x, btn_y, btn_w, btn_h)
+    btn_dossier = pygame.Rect(dossier_x, btn_y, btn_w, btn_h)
+    btn_accuse = pygame.Rect(accuse_x, btn_y, btn_w, btn_h)
+
+    footer_h = max(24, int(height * 0.037))
+    btn_menu = pygame.Rect(
+        right.x + max(6, int(width * 0.008)),
+        right.bottom - footer_h,
+        int(right.w * 0.45),
+        footer_h - 2,
+    )
+    btn_save = pygame.Rect(
+        right.right - int(right.w * 0.38) - max(6, int(width * 0.008)),
+        right.bottom - footer_h,
+        int(right.w * 0.38),
+        footer_h - 2,
+    )
+
+    hint = pygame.Rect(map_rect.x + 8, map_rect.bottom - max(20, int(height * 0.028)), map_rect.w - 16, max(16, int(height * 0.024)))
+
+    # Поле для пинов: не залезаем под подсказку внизу.
+    play = pygame.Rect(map_rect.x, map_rect.y, map_rect.w, map_rect.h - (hint.h + 10))
+    world_w, world_h = world
+    location_ids: List[str] = []
+    pins: List[pygame.Rect] = []
+    for loc in locations:
+        try:
+            lx = float(loc.get("x", 0))
+            ly = float(loc.get("y", 0))
+        except (TypeError, ValueError):
+            lx = ly = 0.0
+        cx = play.x + int((lx / max(1, world_w)) * play.w)
+        cy = play.y + int((ly / max(1, world_h)) * play.h)
+        cx = max(play.x + pin_radius, min(play.right - pin_radius, cx))
+        cy = max(play.y + pin_radius, min(play.bottom - pin_radius, cy))
+        location_ids.append(str(loc.get("id", "")))
+        pins.append(
+            pygame.Rect(cx - pin_radius, cy - pin_radius, pin_radius * 2, pin_radius * 2)
+        )
+
+    return MapLayout(
+        width=width,
+        height=height,
+        header=header,
+        map_rect=map_rect,
+        right=right,
+        hint=hint,
+        btn_notebook=btn_notebook,
+        btn_dossier=btn_dossier,
+        btn_accuse=btn_accuse,
+        btn_menu=btn_menu,
+        btn_save=btn_save,
+        location_ids=location_ids,
+        pins=pins,
+        world_size=world,
+    )

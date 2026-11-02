@@ -20,7 +20,18 @@ from .save_system import (
     save_game,
     save_settings,
 )
-from .ui.layout import case_select_layout, customization_layout, settings_layout
+from .ui.layout import (
+    case_select_layout,
+    customization_layout,
+    map_layout,
+    settings_layout,
+)
+from .ui.tutorial import TutorialState
+from .ui.tutorial_view import (
+    draw_tutorial_screen,
+    handle_tutorial_click,
+    handle_tutorial_key,
+)
 from .ui.widgets import (
     Button,
     TextInput,
@@ -190,6 +201,9 @@ class Game:
         self.notebook_tab = "clues"  # clues | suspects | map
         # accusation
         self.accusation_selected = None
+        # интерактивная «Школа детектива»
+        self.tutorial = TutorialState()
+        self.tutorial_seen = bool(self.settings.get("tutorial_seen", False))
         # updater — проверяем только если включена авто-проверка в настройках
         self.update_checker = UpdateChecker()
         if self.settings.get("auto_check_updates", True):
@@ -202,6 +216,10 @@ class Game:
         self.notifications = []  # list of (text, time)
         # итог прошлой установки обновления (обновилось / не обновилось)
         self._report_update_result(consume_update_result())
+        if not self.tutorial_seen:
+            self.add_notification(
+                "Впервые здесь? Меню → «ТУТОРИАЛ»: карта, улики и видео-обзор"
+            )
         # time
         self.start_time = time.time()
 
@@ -390,7 +408,8 @@ class Game:
         now = time.time()
         self.notifications = [n for n in self.notifications if n[1] > now]
         W = self.screen.get_width()
-        y = 20
+        # на экране обучения шапка занимает верх — уведомления уводим ниже
+        y = 96 if self.screen_name == "tutorial" else 20
         font = get_font(14)
         for text, _ in self.notifications:
             surf = font.render(text, True, COLOR_TEXT)
@@ -426,7 +445,32 @@ class Game:
         pygame.quit()
         sys.exit(0)
 
+    def draw_tutorial(self):
+        """Интерактивная «Школа детектива» (карта, улики, блокнот, видео-обзор)."""
+        draw_tutorial_screen(self, self.tutorial)
+        # запоминаем, что игрок открыл обучение — подсказку больше не показываем
+        if not self.tutorial_seen:
+            self.tutorial_seen = True
+            self.settings["tutorial_seen"] = True
+            try:
+                save_settings(self.settings)
+            except Exception:
+                pass
+
     def handle_event(self, event):
+        # F1 — «Школа детектива» из любого экрана (кроме самого обучения)
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_F1 and self.screen_name != "tutorial":
+            if self.screen_name in ("menu", "settings", "customization", "case_select"):
+                self.screen_name = "tutorial"
+                self.tutorial.goto(0)
+                return
+        if self.screen_name == "tutorial":
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                handle_tutorial_click(self, self.tutorial, event.pos)
+                return
+            if handle_tutorial_key(self, self.tutorial, event):
+                return
+            return
         # Глобально: дропдауны настроек — взаимоисключение и закрытие по клику в пустоту
         if self.screen_name == "settings" and hasattr(self, "resolution_dropdown"):
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -496,22 +540,17 @@ class Game:
                         self.start_case(case["id"])
                         return
         elif self.screen_name == "map":
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self.current_case:
-                    for loc in self.current_case["locations"]:
-                        # проверяем доступна ли локация
-                        if loc["id"] not in self.get_available_locations():
-                            continue
-                        pos = (loc["x"], loc["y"])
-                        dx = event.pos[0] - pos[0]
-                        dy = event.pos[1] - pos[1]
-                        if dx * dx + dy * dy < 20 * 20:
-                            self.location_id = loc["id"]
-                            self.screen_name = "location"
-                            # отмечаем посещение
-                            self.state.visited_locations.add(loc["id"])
-                            # автосохранение
-                            save_game(self.state)
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.current_case:
+                layout = self._map_layout()
+                loc_id = layout.pin_at(event.pos)
+                # Пины ловятся в тех же точках, где нарисованы (раньше клик
+                # проверялся по сырым координатам дела и уходил мимо).
+                if loc_id and loc_id in self.get_available_locations():
+                    pygame.time.wait(120)
+                    self.location_id = loc_id
+                    self.screen_name = "location"
+                    self.state.visited_locations.add(loc_id)
+                    save_game(self.state)
         elif self.screen_name == "location":
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 self.screen_name = "map"
@@ -544,6 +583,12 @@ class Game:
         # обновление времени
         if self.state.case_state == "in_progress":
             self.state.total_playtime += 1 / FPS
+        if self.screen_name == "tutorial":
+            try:
+                dt = self.clock.get_time()
+            except Exception:
+                dt = 1000 // FPS
+            self.tutorial.update(dt)
 
     def draw(self):
         # Letterbox рендер: рисуем всё на логический холст 1280×720, затем масштабируем
@@ -574,6 +619,8 @@ class Game:
                 self.draw_ending()
             elif self.screen_name == "settings":
                 self.draw_settings()
+            elif self.screen_name == "tutorial":
+                self.draw_tutorial()
             # уведомления поверх всего
             self.draw_notifications()
             # проверка обновлений баннер
@@ -661,18 +708,38 @@ class Game:
         else:
             b1 = Button((W // 2 - 140, btn_y, 280, 52), "НАЧАТЬ РАССЛЕДОВАНИЕ", accent=True, tooltip="Начать первую игру — создать детектива")
             buttons.append(("new", b1))
-        b3 = Button((panel_rect.x + 80, btn_y + 60, 160, 40), "НАСТРОЙКИ", tooltip="Экран, звук и обновления")
+        # Второй ряд: четыре кнопки на всю ширину панели и со своим (мельче)
+        # шрифтом — «КАСТОМИЗАЦИЯ» в узкую кнопку не влезала и выезжала за край.
+        row2_gap = 10
+        row2_x = panel_rect.x + 60
+        row2_w = panel_rect.w - 120
+        row2_bw = (row2_w - row2_gap * 3) // 4
+        row2_y = btn_y + 60
+
+        def _row2(index):
+            return pygame.Rect(row2_x + index * (row2_bw + row2_gap), row2_y, row2_bw, 40)
+
+        b3 = Button(_row2(0), "НАСТРОЙКИ", tooltip="Экран, звук и обновления")
         buttons.append(("settings", b3))
-        b4 = Button((panel_rect.x + 260, btn_y + 60, 200, 40), "КАСТОМИЗАЦИЯ", tooltip="Внешность и прошлое детектива")
+        b4 = Button(_row2(1), "КАСТОМИЗАЦИЯ", tooltip="Внешность и прошлое детектива")
         buttons.append(("custom", b4))
-        b5 = Button((panel_rect.right - 240, btn_y + 60, 160, 40), "ВЫХОД", tooltip="Выйти на рабочий стол")
-        buttons.append(("exit", b5))
+        b5 = Button(
+            _row2(2),
+            "ТУТОРИАЛ",
+            accent=not self.tutorial_seen,
+            tooltip="Как играть: карта, улики, блокнот и видео-обзор",
+        )
+        buttons.append(("tutorial", b5))
+        b6 = Button(_row2(3), "ВЫХОД", tooltip="Выйти на рабочий стол (F1 — туториал)")
+        buttons.append(("exit", b6))
 
         mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
+        font_btn_small = get_font(12, bold=True)
+        primary_keys = {"continue", "new"}
         for key, btn in buttons:
             btn.update(mouse, pressed)
-            btn.draw(self.screen, font_btn)
+            btn.draw(self.screen, font_btn if key in primary_keys else font_btn_small)
             if btn.clicked:
                 # debounce
                 pygame.time.wait(150)
@@ -685,6 +752,9 @@ class Game:
                     self.screen_name = "customization"
                 elif key == "settings":
                     self.screen_name = "settings"
+                elif key == "tutorial":
+                    self.tutorial.goto(0)
+                    self.screen_name = "tutorial"
                 elif key == "exit":
                     self.running = False
 
@@ -978,33 +1048,44 @@ class Game:
         self.screen_name = "map"
         self.add_notification(f"Дело «{case['title']}» начато. Удачи, {self.state.detective.name}!")
 
+    def _map_layout(self):
+        """Макет карты (общий для отрисовки и кликов) — логические координаты."""
+        locations = (self.current_case or {}).get("locations", [])
+        return map_layout(
+            self.LOGICAL_W,
+            self.LOGICAL_H,
+            locations,
+            pin_radius=18,
+            world=(WINDOW_WIDTH, WINDOW_HEIGHT),
+        )
+
     def draw_map(self):
         if not self.current_case:
             return
+        layout = self._map_layout()
         font_title = get_font(20, bold=True)
         font_small = get_font(13)
+
         # header
-        header = pygame.Rect(20, 15, WINDOW_WIDTH - 40, 50)
-        draw_panel(self.screen, header)
+        draw_panel(self.screen, layout.header)
         case_title = font_title.render(
             f"ДЕЛО: {self.current_case['title'].upper()}", True, COLOR_ACCENT
         )
-        self.screen.blit(case_title, (header.x + 20, header.y + 8))
+        self.screen.blit(case_title, (layout.header.x + 20, layout.header.y + 8))
         day_text = font_small.render(
             f"День {self.state.game_day} • Время: {9 + self.state.case_time_minutes // 60:02d}:{self.state.case_time_minutes % 60:02d} • Улик: {len(self.state.collected_clues)}/{len(self.current_case['clues'])}",
             True,
             COLOR_TEXT_DIM,
         )
-        self.screen.blit(day_text, (header.x + 20, header.y + 30))
-        # top right buttons
-        btn_notebook = Button((header.right - 340, header.y + 10, 100, 30), "БЛОКНОТ")
-        btn_dossier = Button((header.right - 230, header.y + 10, 100, 30), "ДОСЬЕ")
-        btn_accuse = Button((header.right - 120, header.y + 10, 100, 30), "ОБВИНИТЬ", accent=True)
-        # доступность обвинения: нужно минимум 3 улики
-        can_accuse = len(self.state.collected_clues) >= 3
-        btn_accuse.enabled = can_accuse
+        self.screen.blit(day_text, (layout.header.x + 20, layout.header.y + 30))
+
         mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
+        can_accuse = len(self.state.collected_clues) >= 3
+        btn_notebook = Button(layout.btn_notebook, "БЛОКНОТ")
+        btn_dossier = Button(layout.btn_dossier, "ДОСЬЕ")
+        btn_accuse = Button(layout.btn_accuse, "ОБВИНИТЬ", accent=True)
+        btn_accuse.enabled = can_accuse
         for btn, action in [
             (btn_notebook, "notebook"),
             (btn_dossier, "dossier"),
@@ -1022,14 +1103,11 @@ class Game:
                     self.screen_name = "notebook"
                 elif action == "accuse" and can_accuse:
                     self.screen_name = "accusation"
-        # карта панель
-        map_rect = pygame.Rect(20, 75, WINDOW_WIDTH - 320, WINDOW_HEIGHT - 95)
-        draw_panel(self.screen, map_rect)
-        # рисуем карту — фон города ( districts )
-        # подложка
-        city_surf = pygame.Surface((map_rect.w, map_rect.h))
+
+        # карта
+        draw_panel(self.screen, layout.map_rect)
+        city_surf = pygame.Surface((layout.map_rect.w, layout.map_rect.h))
         city_surf.fill((18, 18, 26))
-        # районы
         districts = [
             {"name": "ЦЕНТР", "x": 0.35, "y": 0.3, "w": 0.3, "h": 0.3},
             {"name": "ПОРТ", "x": 0.7, "y": 0.5, "w": 0.3, "h": 0.5},
@@ -1039,51 +1117,48 @@ class Game:
         ]
         for d in districts:
             r = pygame.Rect(
-                int(d["x"] * map_rect.w),
-                int(d["y"] * map_rect.h),
-                int(d["w"] * map_rect.w),
-                int(d["h"] * map_rect.h),
+                int(d["x"] * layout.map_rect.w),
+                int(d["y"] * layout.map_rect.h),
+                int(d["w"] * layout.map_rect.w),
+                int(d["h"] * layout.map_rect.h),
             )
             pygame.draw.rect(city_surf, (28, 28, 38), r, border_radius=8)
             pygame.draw.rect(city_surf, (50, 50, 60), r, width=1, border_radius=8)
             font_dist = get_font(10, bold=True)
             txt = font_dist.render(d["name"], True, (80, 80, 90))
             city_surf.blit(txt, (r.x + 8, r.y + 6))
-        # дороги
-        for x in range(0, map_rect.w, 80):
-            pygame.draw.line(city_surf, (40, 40, 50), (x, 0), (x, map_rect.h), 1)
-        for y in range(0, map_rect.h, 80):
-            pygame.draw.line(city_surf, (40, 40, 50), (0, y), (map_rect.w, y), 1)
-        self.screen.blit(city_surf, map_rect.topleft)
-        # локации
+        for x in range(0, layout.map_rect.w, 80):
+            pygame.draw.line(city_surf, (40, 40, 50), (x, 0), (x, layout.map_rect.h), 1)
+        for y in range(0, layout.map_rect.h, 80):
+            pygame.draw.line(city_surf, (40, 40, 50), (0, y), (layout.map_rect.w, y), 1)
+        self.screen.blit(city_surf, layout.map_rect.topleft)
+
+        # локации: позиции берём из макета — те же, по которым ловим клики
         avail = self.get_available_locations()
-        for loc in self.current_case["locations"]:
+        for loc, pin_rect in zip(self.current_case["locations"], layout.pins, strict=False):
             if loc["id"] not in avail:
                 continue
             visited = loc["id"] in self.state.visited_locations
-            # координаты уже в системе 1280x720, маппим
-            # map_rect corresponds to 0..1280, 0..720 minus header? упростим — прямо используем координаты, но смещаем
-            # Для простоты: loc x,y — сразу в окне, но нам нужно внутри map_rect
-            # map_rect origin (20,75), size 940x630 примерно соответствует городу 1280x720
-            # масштабируем
-            mx = map_rect.x + int((loc["x"] / WINDOW_WIDTH) * map_rect.w)
-            my = map_rect.y + int((loc["y"] / WINDOW_HEIGHT) * map_rect.h)
             draw_map_pin(
-                self.screen, (mx, my), loc, visited=visited, current=(loc["id"] == self.location_id)
+                self.screen,
+                pin_rect.center,
+                loc,
+                visited=visited,
+                current=(loc["id"] == self.location_id),
             )
-        # подсказка
+
         hint = font_small.render(
             "Нажмите на локацию, чтобы посетить. Серые — недоступны, пока не найдёте зацепку.",
             True,
             COLOR_TEXT_DIM,
         )
-        self.screen.blit(hint, (map_rect.x + 10, map_rect.bottom - 20))
-        # правая панель — активные улики / время
-        right = pygame.Rect(WINDOW_WIDTH - 290, 75, 270, WINDOW_HEIGHT - 95)
+        self.screen.blit(hint, (layout.hint.x, layout.hint.y))
+
+        # правая панель — журнал детектива
+        right = layout.right
         draw_panel(self.screen, right)
         r_title = get_font(14, bold=True).render("ЖУРНАЛ ДЕТЕКТИВА", True, COLOR_ACCENT)
         self.screen.blit(r_title, (right.x + 15, right.y + 15))
-        # детектив мини
         av = next((a for a in AVATARS if a["id"] == self.state.detective.avatar_id), AVATARS[0])
         avatar_rect = pygame.Rect(right.x + 15, right.y + 40, 50, 50)
         draw_avatar(self.screen, avatar_rect, av, selected=True)
@@ -1098,7 +1173,6 @@ class Game:
             (right.right - 15, right.y + 100),
             1,
         )
-        # последние улики
         clue_title = get_font(12, bold=True).render("СОБРАННЫЕ УЛИКИ", True, COLOR_TEXT)
         self.screen.blit(clue_title, (right.x + 15, right.y + 110))
         y = right.y + 135
@@ -1111,7 +1185,6 @@ class Game:
                 clue = get_clue(self.current_case, clue_id)
                 if not clue:
                     continue
-                # иконка
                 pygame.draw.rect(
                     self.screen, (40, 40, 50), (right.x + 15, y, 240, 30), border_radius=4
                 )
@@ -1123,10 +1196,9 @@ class Game:
                 t = font_clue.render(clue["title"][:24], True, COLOR_TEXT)
                 self.screen.blit(t, (right.x + 40, y + 7))
                 y += 36
-                if y > right.bottom - 100:
+                if y > layout.btn_menu.y - 40:
                     break
-        # прогресс
-        prog_rect = pygame.Rect(right.x + 15, right.bottom - 70, right.w - 30, 8)
+        prog_rect = pygame.Rect(right.x + 15, layout.btn_menu.y - 26, right.w - 30, 8)
         pygame.draw.rect(self.screen, (40, 40, 50), prog_rect, border_radius=4)
         progress = len(self.state.collected_clues) / max(1, len(self.current_case["clues"]))
         pygame.draw.rect(
@@ -1139,9 +1211,9 @@ class Game:
             f"Прогресс расследования: {int(progress * 100)}%", True, COLOR_TEXT_DIM
         )
         self.screen.blit(prog_text, (right.x + 15, prog_rect.y - 15))
-        # кнопки в правой панели
-        btn_back2 = Button((right.x + 15, right.bottom - 30, 120, 26), "← МЕНЮ")
-        btn_save2 = Button((right.right - 115, right.bottom - 30, 100, 26), "СОХРАНИТЬ")
+
+        btn_back2 = Button(layout.btn_menu, "← МЕНЮ")
+        btn_save2 = Button(layout.btn_save, "СОХРАНИТЬ")
         for btn, act in [(btn_back2, "menu"), (btn_save2, "save")]:
             btn.update(mouse, pressed)
             btn.draw(self.screen, get_font(10, bold=True))
