@@ -6,6 +6,7 @@ import time
 import pygame
 
 from . import dialogue, get_version_source
+from . import endings as ending_logic
 from .config import *
 from .data import case_map, get_clue, get_location, list_cases, load_case
 from .game_state import AVATARS, BACKGROUNDS, DetectiveProfile, GameState
@@ -1034,8 +1035,11 @@ class Game:
             self.screen.blit(title_surf, card.title_pos)
             sub = get_font(12).render(case["subtitle"], True, COLOR_ACCENT)
             self.screen.blit(sub, card.subtitle_pos)
+            opened, total_end = ending_logic.progress(self.state, case)
             diff = get_font(11).render(
-                f"{case['difficulty']} • {case['duration']}", True, COLOR_TEXT_DIM
+                f"{case['difficulty']} • {case['duration']} • концовки {opened}/{total_end}",
+                True,
+                COLOR_TEXT_DIM,
             )
             self.screen.blit(diff, card.meta_pos)
             # описание
@@ -1092,6 +1096,9 @@ class Game:
         self.state.case_state = "in_progress"
         self.state.accusation_result = None
         self.state.accusation_correct = None
+        self.state.dialogue_choices = {}
+        self.state.trust = {}
+        self.state.trust_bonus_taken = set()
         save_game(self.state)
         self.location_id = "office"
         self.screen_name = "map"
@@ -1162,7 +1169,7 @@ class Game:
         )
         self.screen.blit(case_title, (layout.header.x + 20, layout.header.y + 8))
         day_text = font_small.render(
-            f"День {self.state.game_day} • Время: {9 + self.state.case_time_minutes // 60:02d}:{self.state.case_time_minutes % 60:02d} • Улик: {len(self.state.collected_clues)}/{len(self.current_case['clues'])}",
+            f"День {self.state.game_day} • Время: {9 + self.state.case_time_minutes // 60:02d}:{self.state.case_time_minutes % 60:02d} • Улик: {len(self.state.collected_clues)}/{len(self.current_case['clues'])} (нужно {ending_logic.required_clues(self.current_case)})",
             True,
             COLOR_TEXT_DIM,
         )
@@ -1170,10 +1177,15 @@ class Game:
 
         mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
-        can_accuse = len(self.state.collected_clues) >= 3
+        can_accuse = ending_logic.can_accuse(self.state, self.current_case)
         btn_notebook = Button(layout.btn_notebook, "БЛОКНОТ")
         btn_dossier = Button(layout.btn_dossier, "ДОСЬЕ")
-        btn_accuse = Button(layout.btn_accuse, "ОБВИНИТЬ", accent=True)
+        btn_accuse = Button(
+            layout.btn_accuse,
+            "ОБВИНИТЬ",
+            accent=True,
+            tooltip=ending_logic.clue_hint(self.state, self.current_case),
+        )
         btn_accuse.enabled = can_accuse
         for btn, action in [
             (btn_notebook, "notebook"),
@@ -1191,6 +1203,7 @@ class Game:
                     self.notebook_tab = "suspects"
                     self.screen_name = "notebook"
                 elif action == "accuse" and can_accuse:
+                    self.accusation_selected = None
                     self.screen_name = "accusation"
 
         # карта дела — художественная карта-картинка (assets/images/maps/…)
@@ -2077,13 +2090,30 @@ class Game:
             COLOR_TEXT_DIM,
         )
         self.screen.blit(instr, (main.x + 20, main.y + 15))
+        # сколько улик есть и сколько рекомендуется
+        have = len(self.state.collected_clues)
+        need = ending_logic.required_clues(self.current_case)
+        total_clues = len(self.current_case.get("clues", []))
+        if have >= need:
+            clue_line = f"Улик: {have} из {total_clues} — доказательств достаточно"
+            clue_col = COLOR_GREEN
+        else:
+            clue_line = (
+                f"Улик: {have} из {total_clues} — рекомендуется {need}: "
+                "с малым числом улик дело может развалиться в суде"
+            )
+            clue_col = COLOR_ACCENT
+        self.screen.blit(
+            get_font(12, bold=have >= need).render(clue_line, True, clue_col),
+            (main.x + 20, main.y + 34),
+        )
         # подозреваемые карточки
         mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
-        y = main.y + 50
+        y = main.y + 62
         for sus in self.current_case.get("suspects", []):
             selected = self.accusation_selected == sus["id"]
-            r = pygame.Rect(main.x + 20, y, main.w - 40, 100)
+            r = pygame.Rect(main.x + 20, y, main.w - 40, 96)
             col = COLOR_ACCENT if selected else (30, 30, 40)
             tcol = (10, 10, 10) if selected else COLOR_TEXT
             pygame.draw.rect(self.screen, col, r, border_radius=8)
@@ -2095,20 +2125,34 @@ class Game:
                 border_radius=8,
             )
             name = get_font(16, bold=True).render(sus["name"], True, tcol)
-            self.screen.blit(name, (r.x + 20, r.y + 15))
+            self.screen.blit(name, (r.x + 20, r.y + 12))
             motive = get_font(11).render(
                 sus["motive"], True, (10, 10, 10) if selected else COLOR_TEXT_DIM
             )
-            self.screen.blit(motive, (r.x + 20, r.y + 40))
-            # кликабельность
-            if r.collidepoint(mouse) and pressed:
-                pygame.time.wait(150)
+            self.screen.blit(motive, (r.x + 20, r.y + 36))
+            # доказательства: сколько улик по этому подозреваемому уже на руках
+            evidence = list(sus.get("evidence") or [])
+            found = sum(1 for clue_id in evidence if clue_id in self.state.collected_clues)
+            if evidence:
+                ev_text = f"доказательства: {found}/{len(evidence)}"
+                ev_col = (60, 90, 60) if found >= len(evidence) else (90, 70, 40)
+            else:
+                ev_text = "доказательств нет"
+                ev_col = (110, 70, 70)
+            if selected:
+                ev_col = (40, 40, 30)
+            self.screen.blit(
+                get_font(10, bold=True).render(ev_text.upper(), True, ev_col),
+                (r.x + 20, r.y + 58),
+            )
+            # кликабельность — один выбор на нажатие
+            if r.collidepoint(mouse) and pressed and self._click_once():
                 self.accusation_selected = sus["id"]
             # галочка
             if selected:
                 chk = get_font(20, bold=True).render("✓", True, (10, 10, 10))
                 self.screen.blit(chk, (r.right - 40, r.y + 20))
-            y += 110
+            y += 102
         # кнопки
         btn_back = Button((main.x + 20, main.bottom - 50, 160, 40), "← ОТМЕНА")
         can_confirm = self.accusation_selected is not None
@@ -2121,56 +2165,82 @@ class Game:
         for btn, act in [(btn_back, "back"), (btn_confirm, "confirm")]:
             btn.update(mouse, pressed)
             btn.draw(self.screen, get_font(13, bold=True))
-            if btn.clicked:
+            if btn.clicked and self._click_once():
                 pygame.time.wait(150)
                 if act == "back":
                     self.screen_name = "map"
                 else:
-                    # финал
-                    self.state.accusation_result = self.accusation_selected
-                    # проверяем правильность
-                    suspect = next(
-                        (
-                            s
-                            for s in self.current_case["suspects"]
-                            if s["id"] == self.accusation_selected
-                        ),
-                        None,
-                    )
-                    self.state.accusation_correct = bool(suspect and suspect.get("is_culprit"))
-                    self.state.case_state = "finished"
-                    save_game(self.state)
-                    self.screen_name = "ending"
+                    self._finish_case()
+        # подсказка, если доказательств по выбранному мало
+        if self.accusation_selected:
+            sus = ending_logic.suspect_of(self.current_case, self.accusation_selected) or {}
+            evidence = list(sus.get("evidence") or [])
+            missing = [cid for cid in evidence if cid not in self.state.collected_clues]
+            if missing and have >= need:
+                warn = get_font(11).render(
+                    "По этому подозреваемому не хватает части доказательств — суд может не согласиться.",
+                    True,
+                    COLOR_ACCENT,
+                )
+                self.screen.blit(warn, (main.x + 20, main.bottom - 76))
+
+    def _finish_case(self):
+        """Обвинение предъявлено: финал, запись концовки в коллекцию."""
+        suspect = ending_logic.suspect_of(self.current_case, self.accusation_selected)
+        self.state.accusation_result = self.accusation_selected
+        self.state.accusation_correct = bool(suspect and suspect.get("is_culprit"))
+        self.state.case_state = "finished"
+        resolution = ending_logic.resolve(self.current_case, self.state)
+        case_id = str(self.current_case.get("id", ""))
+        known = ending_logic.ending_key(case_id, resolution) in ending_logic.unlocked_for(
+            self.state, case_id
+        )
+        ending_logic.record(self.state, case_id, resolution)
+        self._ending_is_new = not known
+        save_game(self.state)
+        self.screen_name = "ending"
 
     def draw_ending(self):
         if not self.current_case:
             return
-        ending_data = self.current_case.get("endings", {}).get(self.state.accusation_result, {})
-        success = ending_data.get("success", False)
-        title = ending_data.get("title", "Финал")
-        text = ending_data.get("text", "История окончена.")
-        rank = ending_data.get("rank", "?")
+        resolution = ending_logic.resolve(self.current_case, self.state)
+        success = bool(resolution["success"])
+        title = resolution["title"]
+        text = resolution["text"]
+        rank = resolution["rank"]
+        label = resolution["label"]
         # фон
         overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
         overlay.fill((10, 10, 14) if success else (20, 10, 10))
         self.screen.blit(overlay, (0, 0))
         # панель
-        panel = pygame.Rect(WINDOW_WIDTH // 2 - 380, WINDOW_HEIGHT // 2 - 260, 760, 520)
+        panel = pygame.Rect(WINDOW_WIDTH // 2 - 380, WINDOW_HEIGHT // 2 - 270, 760, 540)
         draw_panel(self.screen, panel)
         # ранг
-        rank_font = get_font(56, bold=True)
+        rank_font = get_font(52, bold=True)
         rank_col = COLOR_GREEN if success else COLOR_RED
         rank_surf = rank_font.render(f"РАНГ {rank}", True, rank_col)
-        self.screen.blit(rank_surf, rank_surf.get_rect(center=(panel.centerx, panel.y + 50)))
-        result_col = COLOR_GREEN if success else COLOR_RED
-        result_text = "ДЕЛО РАСКРЫТО" if success else "ПРОВАЛ"
-        res_font = get_font(28, bold=True)
-        res = res_font.render(result_text, True, result_col)
-        self.screen.blit(res, res.get_rect(center=(panel.centerx, panel.y + 95)))
+        self.screen.blit(rank_surf, rank_surf.get_rect(center=(panel.centerx, panel.y + 46)))
+        result_text = "ДЕЛО РАСКРЫТО" if success else "ДЕЛО ПРОВАЛЕНО"
+        res = get_font(26, bold=True).render(result_text, True, rank_col)
+        self.screen.blit(res, res.get_rect(center=(panel.centerx, panel.y + 92)))
+        # метка концовки: какая именно из нескольких
+        chip_font = get_font(10, bold=True)
+        chip_text = chip_font.render(label.upper(), True, (240, 232, 208))
+        chip = pygame.Rect(0, 0, chip_text.get_width() + 22, 20)
+        chip.center = (panel.centerx, panel.y + 118)
+        pygame.draw.rect(self.screen, (34, 34, 44), chip, border_radius=10)
+        pygame.draw.rect(self.screen, rank_col, chip, width=1, border_radius=10)
+        self.screen.blit(chip_text, (chip.x + 11, chip.y + 4))
+        if getattr(self, "_ending_is_new", False):
+            new_rect = pygame.Rect(chip.right + 8, chip.y, 62, 20)
+            pygame.draw.rect(self.screen, COLOR_ACCENT, new_rect, border_radius=10)
+            new_txt = get_font(9, bold=True).render("НОВАЯ", True, (12, 12, 12))
+            self.screen.blit(new_txt, new_txt.get_rect(center=new_rect.center))
         tit = get_font(18, bold=True).render(title, True, COLOR_TEXT)
-        self.screen.blit(tit, tit.get_rect(center=(panel.centerx, panel.y + 125)))
+        self.screen.blit(tit, tit.get_rect(center=(panel.centerx, panel.y + 146)))
         # текст финала
-        text_rect = pygame.Rect(panel.x + 30, panel.y + 150, panel.w - 60, 250)
+        text_rect = pygame.Rect(panel.x + 30, panel.y + 166, panel.w - 60, 220)
         draw_panel(self.screen, text_rect, color=(22, 22, 30))
         draw_text_wrapped(
             self.screen,
@@ -2180,12 +2250,34 @@ class Game:
             pygame.Rect(text_rect.x + 15, text_rect.y + 15, text_rect.w - 30, text_rect.h - 30),
         )
         # статистика
+        case = self.current_case
+        total_clues = len(case.get("clues", []))
+        need = ending_logic.required_clues(case)
+        trust = sum(
+            int(self.state.trust.get(ch.get("id", ""), 0)) for ch in case.get("characters", [])
+        )
+        bonuses = sum(
+            1 for ch in case.get("characters", []) if ch.get("id") in self.state.trust_bonus_taken
+        )
         stats = get_font(12).render(
-            f"Улик собрано: {len(self.state.collected_clues)}/{len(self.current_case['clues'])} • Время: {self.state.case_time_minutes} мин • Детектив: {self.state.detective.name} ({self.state.detective.background_label})",
+            f"Улик: {len(self.state.collected_clues)}/{total_clues} (рекомендовано {need}) • "
+            f"Время: {self.state.case_time_minutes} мин • Доверие: {trust:+d} • Бонусов: {bonuses}",
             True,
             COLOR_TEXT_DIM,
         )
-        self.screen.blit(stats, stats.get_rect(center=(panel.centerx, panel.y + 420)))
+        self.screen.blit(stats, stats.get_rect(center=(panel.centerx, panel.y + 402)))
+        opened, total_endings = ending_logic.progress(self.state, case)
+        prog_col = COLOR_ACCENT if opened < total_endings else COLOR_GREEN
+        prog = get_font(12, bold=True).render(
+            f"Открыто концовок: {opened} из {total_endings}", True, prog_col
+        )
+        self.screen.blit(prog, prog.get_rect(center=(panel.centerx, panel.y + 424)))
+        hint = get_font(10).render(
+            "Другие реплики, доверие и число улик открывают другие финалы.",
+            True,
+            COLOR_TEXT_DARK,
+        )
+        self.screen.blit(hint, hint.get_rect(center=(panel.centerx, panel.y + 444)))
         # кнопки
         mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
@@ -2196,7 +2288,7 @@ class Game:
         for btn, act in [(btn_menu, "menu"), (btn_replay, "replay")]:
             btn.update(mouse, pressed)
             btn.draw(self.screen, get_font(13, bold=True))
-            if btn.clicked:
+            if btn.clicked and self._click_once():
                 pygame.time.wait(150)
                 if act == "menu":
                     self.screen_name = "menu"

@@ -2,6 +2,7 @@
 import json
 from typing import Dict, List, Optional
 
+from .case_endings import ENDING_VARIANTS
 from .case_topics import INTERACTIVE_TOPICS, TRUST_BONUSES
 from .config import CASES_DIR
 
@@ -245,7 +246,28 @@ def _merge_interactive_topics(cases: List[Dict]) -> None:
                 char["trust_bonus"] = dict(bonus)
 
 
+def _merge_ending_variants(cases: List[Dict]) -> None:
+    """Добавить варианты концовок (несколько финалов на дело)."""
+    for case in cases:
+        endings = case.setdefault("endings", {})
+        for suspect in case.get("suspects", []):
+            variants = ENDING_VARIANTS.get((case["id"], suspect.get("id")))
+            if not variants:
+                continue
+            ending = endings.setdefault(
+                suspect.get("id"),
+                {
+                    "success": bool(suspect.get("is_culprit")),
+                    "title": suspect.get("name", "Финал"),
+                    "text": "История окончена.",
+                    "rank": "B" if suspect.get("is_culprit") else "F",
+                },
+            )
+            ending.setdefault("variants", [dict(v) for v in variants])
+
+
 _merge_interactive_topics(BUILTIN_CASES)
+_merge_ending_variants(BUILTIN_CASES)
 
 
 def get_clue(case: Dict, clue_id: str) -> Optional[Dict]:
