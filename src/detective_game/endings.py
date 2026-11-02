@@ -70,6 +70,18 @@ def clue_hint(state, case: Optional[Dict]) -> str:
     return "Улик достаточно"
 
 
+def clue_count(state, case: Optional[Dict]) -> int:
+    """Сколько улик пойдёт в счёт суда.
+
+    В больших делах слухи без экспертизы и подброшенные бумажки не считаются.
+    """
+    from . import expertise, pressure
+
+    if not pressure.advanced(case):
+        return len(getattr(state, "collected_clues", None) or set())
+    return len(expertise.court_clues(case, state))
+
+
 def _trust_sum(state, case: Dict) -> int:
     trust = getattr(state, "trust", None) or {}
     return sum(int(trust.get(ch.get("id", ""), 0)) for ch in case.get("characters", []))
@@ -88,7 +100,7 @@ def matches(requires: Optional[Dict], state, case: Dict) -> bool:
     """Выполнены ли условия варианта концовки."""
     if not requires:
         return True
-    clues = len(getattr(state, "collected_clues", None) or set())
+    clues = clue_count(state, case)
     total = len(case.get("clues") or [])
     trust = _trust_sum(state, case)
     if requires.get("all_clues") and clues < total:
@@ -111,6 +123,16 @@ def matches(requires: Optional[Dict], state, case: Dict) -> bool:
         requires["max_time"]
     ):
         return False
+    if requires.get("all_deductions"):
+        from . import testimony
+
+        if len(testimony.solved(state, case)) < len(testimony.contradictions(case)):
+            return False
+    if "min_confirmed" in requires:
+        from . import expertise
+
+        if len(expertise.court_clues(case, state)) < int(requires["min_confirmed"]):
+            return False
     return True
 
 
@@ -159,10 +181,34 @@ def _fallback(case: Dict, suspect: Optional[Dict]) -> Dict:
 
 # ранг выше — если игрок восстановил хронологию перед обвинением
 RANK_UP = {"F": "D", "D": "C", "C": "B", "B": "A", "A": "S", "S": "S+", "S+": "S+"}
+RANK_DOWN = {"S+": "S", "S": "A", "A": "B", "B": "C", "C": "D", "D": "F", "F": "F"}
 
 
 def promote_rank(rank: str) -> str:
     return RANK_UP.get(str(rank), str(rank))
+
+
+def demote_rank(rank: str) -> str:
+    return RANK_DOWN.get(str(rank), str(rank))
+
+
+def adjust_rank(rank: str, state, case: Optional[Dict]) -> Tuple[str, List[str]]:
+    """Итоговый ранг: срок, суд (мотив/способ) и хронология."""
+    from . import pressure, trial
+
+    notes: List[str] = []
+    rank = str(rank)
+    bonus = trial.rank_bonus(case, state)
+    if bonus > 0:
+        rank = promote_rank(rank)
+        notes.append("суд: мотив и способ доказаны (+1 ступень)")
+    elif bonus < 0:
+        rank = demote_rank(rank)
+        notes.append("суд: мотив и способ не доказаны (−1 ступень)")
+    if pressure.advanced(case) and pressure.is_late(state, case):
+        rank = demote_rank(rank)
+        notes.append("срок вышел (−1 ступень)")
+    return rank, notes
 
 
 def resolve(case: Optional[Dict], state) -> Dict:
@@ -181,6 +227,13 @@ def resolve(case: Optional[Dict], state) -> Dict:
         "label": "Основная концовка",
         "suspect_id": (suspect or {}).get("id"),
     }
+    from . import pressure, trial
+
+    result["court_clues"] = clue_count(state, case)
+    result["late"] = bool(
+        pressure.advanced(case) and pressure.is_late(state, case)
+    )
+    result["trial"] = trial.evaluate(case, state)
     for variant in base.get("variants") or []:
         if matches(variant.get("requires"), state, case):
             result.update(
@@ -196,6 +249,10 @@ def resolve(case: Optional[Dict], state) -> Dict:
     if result["success"] and getattr(state, "timeline_solved", False):
         result["rank"] = promote_rank(result.get("rank", "F"))
         result["timeline_bonus"] = True
+    rank, notes = adjust_rank(result.get("rank", "F"), state, case)
+    result["rank"] = rank
+    if notes:
+        result["rank_notes"] = notes
     return result
 
 

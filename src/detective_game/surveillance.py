@@ -167,12 +167,53 @@ def spec_for(case: Optional[Dict]) -> Optional[Dict]:
     return spec
 
 
+def blocked(case: Optional[Dict], state) -> bool:
+    """Объект насторожился после провала: до какого-то дня слежка закрыта."""
+    from . import worldtime
+
+    until = int(getattr(state, "tail_blocked_until_day", 0) or 0)
+    if until <= 0:
+        return False
+    day = worldtime.clock(int(getattr(state, "case_time_minutes", 0) or 0))[0]
+    return until > day
+
+
+def block_text(case: Optional[Dict], state) -> str:
+    """Почему слежка недоступна."""
+    if not blocked(case, state):
+        return ""
+    until = int(getattr(state, "tail_blocked_until_day", 0) or 0)
+    if until > 10**5:
+        return "Объект сменил маршрут — слежка по этому делу закрыта"
+    return "Объект насторожился — попробуйте на следующий день"
+
+
+def register_failure(case: Optional[Dict], state) -> str:
+    """Провал слежки: первый — до завтра, второй — навсегда."""
+    from . import worldtime
+
+    case_id = str((case or {}).get("id", ""))
+    failed = getattr(state, "tail_failed", None)
+    if failed is None:
+        state.tail_failed = failed = set()
+    day = worldtime.clock(int(getattr(state, "case_time_minutes", 0) or 0))[0]
+    first = case_id not in failed
+    failed.add(case_id)
+    if first:
+        state.tail_blocked_until_day = day + 1
+        return "Объект насторожился: слежка по этому делу — не раньше следующего дня"
+    state.tail_blocked_until_day = 10**6
+    return "Объект сменил маршрут: слежка по этому делу больше не сработает"
+
+
 def available(case: Optional[Dict], state) -> bool:
     """Можно ли уже идти на слежку."""
     spec = spec_for(case)
     if not spec:
         return False
     if str(case.get("id", "")) in getattr(state, "tail_done", set()):
+        return False
+    if blocked(case, state):
         return False
     need = spec.get("requires_clue")
     if need and str(need) not in getattr(state, "collected_clues", set()):

@@ -18,6 +18,8 @@ from typing import Dict, List, Optional, Set
 DEFAULT_SECONDS = 60
 CLICK_RADIUS = 0.055
 DECOYS_PER_LOCATION = 2
+# патруль в больших делах: подсвеченный сектор нельзя трогать
+PATROL_CYCLE = 6.0
 
 # что можно найти «не по делу» — атмосфера и потерянное время
 FLAVOUR = {
@@ -205,6 +207,12 @@ class Search:
         self.found: List[Dict] = []
         self.expired = False
         self._state = state
+        from . import pressure
+
+        self.patrol_on = pressure.advanced(self.case)
+        self.elapsed = 0.0
+        self.caught = False
+        self.misses = 0
 
     @property
     def total(self) -> int:
@@ -225,9 +233,40 @@ class Search:
     def update(self, dt: float) -> None:
         if self.finished:
             return
-        self.remaining = max(0.0, self.remaining - max(0.0, float(dt or 0.0)))
+        step = max(0.0, float(dt or 0.0))
+        self.elapsed += step
+        self.remaining = max(0.0, self.remaining - step)
         if self.remaining <= 0.0:
             self.expired = True
+
+    # ── патруль ───────────────────────────────────────────────────
+    def patrol_cell(self) -> tuple:
+        """Литой сектор 2×2, в котором сейчас ходит охранник."""
+        step = int(self.elapsed // PATROL_CYCLE) % 4
+        return step % 2, step // 2
+
+    def patrol_rect(self) -> tuple:
+        """Сектор в долях картинки: ``(x, y, w, h)``."""
+        col, row = self.patrol_cell()
+        return (col * 0.5, row * 0.5, 0.5, 0.5)
+
+    def in_patrol(self, x: float, y: float) -> bool:
+        if not self.patrol_on:
+            return False
+        px, py, pw, ph = self.patrol_rect()
+        return px <= x < px + pw and py <= y < py + ph
+
+    def miss(self) -> int:
+        """Пустой клик: в больших делах стоит времени."""
+        from . import pressure
+
+        self.misses += 1
+        minutes = pressure.EMPTY_CLICK_MINUTES if self.patrol_on else 0
+        if minutes:
+            self._state.case_time_minutes = (
+                int(getattr(self._state, "case_time_minutes", 0) or 0) + minutes
+            )
+        return minutes
 
     def at(self, x: float, y: float, radius: float = CLICK_RADIUS) -> Optional[Dict]:
         """Точка под курсором (x, y — доли от размера картинки)."""

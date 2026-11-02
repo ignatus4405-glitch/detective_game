@@ -170,6 +170,29 @@ def draw_board(game, rect: pygame.Rect) -> None:
             COLOR_RED if "Не сходится" in message else COLOR_TEXT_DIM
         )
         game.screen.blit(get_font(10).render(message[:118], True, mcol), (bar.x + 14, bar.y + 24))
+    talk_rect = pygame.Rect(bar.right - 340, bar.y + 7, 160, 30)
+    rects["testimony"] = talk_rect
+    from .. import pressure, testimony
+
+    talk_enabled = pressure.advanced(case) and testimony.available(case, state)
+    talk_hovered = talk_rect.collidepoint(mouse)
+    pygame.draw.rect(
+        game.screen,
+        (52, 46, 32) if talk_hovered and talk_enabled else (30, 30, 38),
+        talk_rect,
+        border_radius=6,
+    )
+    pygame.draw.rect(
+        game.screen,
+        COLOR_ACCENT if talk_enabled else (70, 70, 80),
+        talk_rect,
+        width=1,
+        border_radius=6,
+    )
+    talk_label = get_font(10, bold=True).render(
+        "ПОКАЗАНИЯ", True, COLOR_ACCENT if talk_enabled else COLOR_TEXT_DARK
+    )
+    game.screen.blit(talk_label, talk_label.get_rect(center=talk_rect.center))
     hint_rect = pygame.Rect(bar.right - 170, bar.y + 7, 156, 30)
     rects["hint"] = hint_rect
     hovered = hint_rect.collidepoint(mouse)
@@ -185,6 +208,20 @@ def handle_board_click(game, pos) -> bool:
     rects = getattr(game, "board_rects", {}) or {}
     case = game.current_case or {}
     state = game.state
+    talk = rects.get("testimony")
+    if talk and talk.collidepoint(pos):
+        from .. import pressure, testimony
+
+        if pressure.advanced(case) and testimony.available(case, state):
+            game.testimony_selected = []
+            game.testimony_message = ""
+            game.testimony_return = "board"
+            game.screen_name = "testimony"
+            game.audio.play_sfx("page")
+        else:
+            game.add_notification("Пока нечего сопоставлять: поговорите с людьми")
+            game.audio.play_sfx("tick")
+        return True
     for clue_id, rect in (rects.get("clues") or {}).items():
         if rect.collidepoint(pos):
             game.board_clue = None if game.board_clue == clue_id else clue_id

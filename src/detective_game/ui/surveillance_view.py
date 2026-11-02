@@ -173,6 +173,11 @@ def update(game, dt: float) -> None:
     else:
         game.audio.play_sfx("fail")
         game.add_notification(tail.last_event or "Слежка сорвалась")
+        from .. import pressure
+
+        if pressure.advanced(game.current_case):
+            note = surveillance.register_failure(game.current_case, game.state)
+            game.add_notification(note)
     save_game(game.state)
 
 

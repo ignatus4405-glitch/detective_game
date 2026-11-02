@@ -277,8 +277,220 @@ def _merge_ending_variants(cases: List[Dict]) -> None:
             ending.setdefault("variants", [dict(v) for v in variants])
 
 
+# ── «взрослые» правила: сроки, экспертиза, противоречия, суд ──────────
+# Данные лежат здесь, а не в литералах дел, чтобы правила включались одним
+# флагом и не раздували и без того длинные словари.
+
+ADVANCED_RULES = {
+    "missing_chess": {
+        "deadline_days": 3,
+        "reliability": {"clue_bar_testimony": "hearsay", "clue_fabric": "planted"},
+        "contradictions": [
+            {
+                "id": "thursday_tea",
+                "title": "Чай в четверг",
+                "text": (
+                    "Елена клянётся, что в 16:40 была одна, а Роман рассказывает, "
+                    "как пил у неё чай из треснувшей чашки. Один из них врёт."
+                ),
+                "reputation": 1,
+            },
+            {
+                "id": "boy_two_places",
+                "title": "Мальчик в двух местах",
+                "text": (
+                    "Учительница видела Артёма за третьей доской в 15:20, а бармен "
+                    "уверяет, что в это же время мальчик тянул лимонад у стойки."
+                ),
+                "reputation": 1,
+            },
+        ],
+        "trial": {
+            "motives": [
+                {"id": "collection", "text": "Одержимость: он собирал детей-вундеркиндов"},
+                {"id": "ransom", "text": "Выкуп с матери — деньги на новую жизнь"},
+                {"id": "revenge", "text": "Месть отцу мальчика за старую обиду"},
+            ],
+            "methods": [
+                {"id": "frame", "text": "Спрятал ребёнка и подставил соседа, убрав свидетеля"},
+                {"id": "accident", "text": "Несчастный случай на складе, тело спрятано"},
+                {"id": "flight", "text": "Вывез мальчика поездом в Нортпорт"},
+            ],
+            "answers": {"finch": {"motive": "collection", "method": "frame"}},
+        },
+    },
+    "bank_heist": {
+        "deadline_days": 2,
+        "reliability": {"clue_coffee": "hearsay", "clue_cleaner_key": "planted"},
+        "contradictions": [
+            {
+                "id": "kane_alibi",
+                "title": "Два алиби Кейна",
+                "text": (
+                    "Сначала Кейн спал дома под присмотром жены, потом звонил "
+                    "из «Синей Луны». Оба раза — про одну и ту же ночь."
+                ),
+                "reputation": 1,
+            },
+            {
+                "id": "derek_shadow",
+                "title": "Тень у хранилища",
+                "text": (
+                    "Дерек видел тень у хранилища, но два дня отвечал по протоколу, "
+                    "что ничего не видел. Ему велели молчать."
+                ),
+                "reputation": 1,
+            },
+        ],
+        "trial": {
+            "motives": [
+                {"id": "debts", "text": "Проиграл кассу и должен казино"},
+                {"id": "gold", "text": "Карта сокровищ острова Кэссиди"},
+                {"id": "revenge", "text": "Месть Хейсу за увольнение"},
+            ],
+            "methods": [
+                {"id": "staged", "text": "Инсценировал ограбление изнутри, подставив уборщицу"},
+                {"id": "outside", "text": "Взлом с улицы через подвальное окно"},
+                {"id": "blackmail", "text": "Заставил охранника отключить сигнализацию"},
+            ],
+            "answers": {"kane_sus": {"motive": "debts", "method": "staged"}},
+        },
+    },
+}
+
+EXTRA_TOPICS = {
+    ("missing_chess", "elena"): [
+        {
+            "q": "Вы точно были дома в четверг в 16:40?",
+            "a": (
+                "Да. В шестнадцать сорок я была одна: Роман ко мне не поднимался, "
+                "я его весь вечер не видела."
+            ),
+        }
+    ],
+    ("missing_chess", "roma"): [
+        {
+            "q": "Где вы были в четверг в 16:40?",
+            "a": (
+                "У Елены, наверху. Мы пили чай на кухне — она сама налила, "
+                "я даже помню треснувшую чашку."
+            ),
+        }
+    ],
+    ("missing_chess", "teacher"): [
+        {
+            "q": "Артём точно был на турнире в 15:20?",
+            "a": (
+                "В 15:20 он сидел за третьей доской. Я сама поправила ему воротник "
+                "и вернулась к своим делам."
+            ),
+        }
+    ],
+    ("missing_chess", "barmen"): [
+        {
+            "q": "Пацан в баре — это был Артём?",
+            "a": (
+                "Артём. Девять лет, доска под мышкой. В 15:20 сидел у стойки "
+                "с дядей в плаще и тянул лимонад."
+            ),
+        }
+    ],
+}
+
+# какие темы сопоставлять: (дело, противоречие) -> (вопрос персонажа, вопрос персонажа)
+CONTRADICTION_TOPICS = {
+    ("missing_chess", "thursday_tea"): (
+        ("elena", "Вы точно были дома в четверг в 16:40?"),
+        ("roma", "Где вы были в четверг в 16:40?"),
+    ),
+    ("missing_chess", "boy_two_places"): (
+        ("teacher", "Артём точно был на турнире в 15:20?"),
+        ("barmen", "Пацан в баре — это был Артём?"),
+    ),
+    ("bank_heist", "kane_alibi"): (
+        ("kane", "Где вы были в 2:14 ночи?"),
+        ("kane", "Кто мог слышать ваш звонок?"),
+    ),
+    ("bank_heist", "derek_shadow"): (
+        ("derek", "Что вы видели в коридоре?"),
+        ("derek", "Почему вы молчали два дня?"),
+    ),
+}
+
+
+def _topic_index(char: dict, question: str) -> int:
+    for index, topic in enumerate(char.get("dialogue") or []):
+        if str(topic.get("q") or topic.get("prompt") or "").startswith(question):
+            return index
+    return -1
+
+
+def _merge_advanced_rules(cases: list) -> None:
+    """Включить сроки, экспертизу, противоречия и суд в больших делах."""
+    for case in cases:
+        rules = ADVANCED_RULES.get(case.get("id"))
+        if not rules:
+            continue
+        case["advanced"] = True
+        case["deadline_days"] = int(rules.get("deadline_days", 3))
+        for clue in case.get("clues", []):
+            reliability = (rules.get("reliability") or {}).get(clue.get("id"))
+            if reliability:
+                clue["reliability"] = reliability
+        # новые темы допроса — в конец, чтобы не сдвигать индексы старых
+        for char in case.get("characters", []):
+            for topic in EXTRA_TOPICS.get((case["id"], char.get("id")), []):
+                char.setdefault("dialogue", []).append(dict(topic))
+        # противоречия: подставляем реальные индексы тем
+        contradictions = []
+        for item in rules.get("contradictions") or []:
+            keys = CONTRADICTION_TOPICS.get((case["id"], item["id"]))
+            if not keys:
+                continue
+            chars = {ch.get("id"): ch for ch in case.get("characters", [])}
+            index_a = _topic_index(chars.get(keys[0][0], {}), keys[0][1])
+            index_b = _topic_index(chars.get(keys[1][0], {}), keys[1][1])
+            if index_a < 0 or index_b < 0:
+                continue
+            entry = dict(item)
+            entry["a"] = f"{keys[0][0]}:{index_a}"
+            entry["b"] = f"{keys[1][0]}:{index_b}"
+            contradictions.append(entry)
+        if contradictions:
+            case["contradictions"] = contradictions
+        if rules.get("trial"):
+            case["trial"] = dict(rules["trial"])
+        # лучшая концовка — за полную дедукцию
+        culprit = next(
+            (s.get("id") for s in case.get("suspects", []) if s.get("is_culprit")),
+            None,
+        )
+        if culprit and contradictions:
+            ending = (case.get("endings") or {}).get(culprit)
+            if ending is not None:
+                variants = ending.setdefault("variants", [])
+                if not any(v.get("id") == "deduction_perfect" for v in variants):
+                    variants.insert(
+                        0,
+                        {
+                            "id": "deduction_perfect",
+                            "label": "Безупречное дело",
+                            "title": "Ни одной дыры",
+                            "text": (
+                                "Вы не просто назвали имя — вы разобрали всё по "
+                                "минутам, поймали оба противоречия в показаниях и "
+                                "подтвердили каждую улику. Прокурор кивает с первого "
+                                "слова, а судья снимает очки."
+                            ),
+                            "rank": "S+",
+                            "requires": {"all_deductions": True, "min_clues": 4},
+                        },
+                    )
+
+
 _merge_interactive_topics(BUILTIN_CASES)
 _merge_ending_variants(BUILTIN_CASES)
+_merge_advanced_rules(BUILTIN_CASES)
 
 
 def get_clue(case: Dict, clue_id: str) -> Optional[Dict]:

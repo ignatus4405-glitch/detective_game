@@ -21,9 +21,82 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
+from .pressure import SILENCE_TRUST
+
 MAX_OPTIONS = 3
 DEFAULT_TRUST_BONUS_MIN = 2
 MAX_TRUST = 5
+# ответ «промолчал» в списке выбранных реплик
+DECLINED = -1
+
+
+def day_of(state) -> int:
+    """Текущий игровой день по времени дела."""
+    from . import worldtime
+
+    try:
+        return worldtime.clock(int(getattr(state, "case_time_minutes", 0) or 0))[0]
+    except Exception:
+        return int(getattr(state, "game_day", 1) or 1)
+
+
+def is_asked(state, char_id: str, index: int) -> bool:
+    """Открывал ли игрок эту тему раньше."""
+    return key(char_id, index) in (getattr(state, "asked_topics", None) or set())
+
+
+def mark_asked(state, char_id: str, index: int) -> bool:
+    """Отметить тему как открытую. ``True`` — если открыта впервые."""
+    if getattr(state, "asked_topics", None) is None:
+        state.asked_topics = set()
+    item = key(char_id, index)
+    first = item not in state.asked_topics
+    state.asked_topics.add(item)
+    return first
+
+
+def silenced_until(state, char_id: str) -> int:
+    """День, до которого персонаж отказывается говорить (0 — не молчит)."""
+    try:
+        return int((getattr(state, "silenced", None) or {}).get(char_id, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def is_silent(state, char_id: str) -> bool:
+    """Молчит ли персонаж прямо сейчас."""
+    return silenced_until(state, char_id) > day_of(state)
+
+
+def silence(state, char_id: str) -> int:
+    """Заставить персонажа замолчать до следующего дня."""
+    if getattr(state, "silenced", None) is None:
+        state.silenced = {}
+    until = day_of(state) + 1
+    state.silenced[char_id] = until
+    return until
+
+
+def decline(state, char: Dict, index: int) -> Dict:
+    """Игрок промолчал: тема закрыта, доверие −1."""
+    char_id = str((char or {}).get("id", ""))
+    if chosen(state, char_id, index) is not None:
+        return {"status": "already"}
+    topics = (char or {}).get("dialogue") or []
+    if not 0 <= index < len(topics):
+        return {"status": "no_topic"}
+    if getattr(state, "dialogue_choices", None) is None:
+        state.dialogue_choices = {}
+    state.dialogue_choices[key(char_id, index)] = DECLINED
+    if getattr(state, "trust", None) is None:
+        state.trust = {}
+    delta = -SILENCE_TRUST
+    state.trust[char_id] = trust_of(state, char_id) + delta
+    return {"status": "ok", "trust_delta": delta}
+
+
+def declined(state, char_id: str, index: int) -> bool:
+    return chosen(state, char_id, index) == DECLINED
 
 
 def options(topic: Optional[Dict]) -> List[Dict]:
@@ -131,7 +204,11 @@ def choose(
         state.trust[char_id] = trust_of(state, char_id) + delta
 
     clue = _award_clue(state, option.get("clue"), option.get("time"), clue_lookup)
-    return {"option": option, "trust_delta": delta, "clue": clue}
+    result = {"option": option, "trust_delta": delta, "clue": clue}
+    # жёсткая реплика при нулевом доверии — персонаж закрывается до утра
+    if delta < 0 and trust_of(state, char_id) <= 0:
+        result["silenced_until"] = silence(state, char_id)
+    return result
 
 
 def finish(state, char: Dict, clue_lookup=None) -> Optional[Dict]:
@@ -218,9 +295,11 @@ def topic_locked(topic: Optional[Dict], state, case: Optional[Dict] = None) -> b
     ``"requires": {"board": true}`` — нужен любой собранный вывод,
     ``{"board": "suspect_id"}`` — вывод именно по этому подозреваемому.
     """
-    from . import board
+    from . import board, testimony
 
     req = requires(topic)
+    if req.get("deduction"):
+        return not testimony.has_deduction(state, str(req["deduction"]))
     if not req or "board" not in req:
         return False
     target = req.get("board")
@@ -236,6 +315,9 @@ def lock_hint(topic: Optional[Dict], case: Optional[Dict] = None) -> str:
     """Что сделать, чтобы тема открылась (для подсказки в допросе)."""
     from . import board
 
+    ded = requires(topic).get("deduction")
+    if ded:
+        return "Сначала найдите противоречие в показаниях (блокнот → ВЕРСИИ → ПОКАЗАНИЯ)"
     target = requires(topic).get("board")
     if target is True:
         return "Нужна собранная версия на доске в блокноте"

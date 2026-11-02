@@ -6,9 +6,20 @@ import time
 import pygame
 
 from . import board as board_logic
-from . import dialogue, get_version_source, puzzles, surveillance, timeline, worldtime
+from . import (
+    dialogue,
+    expertise,
+    get_version_source,
+    pressure,
+    puzzles,
+    surveillance,
+    timeline,
+    trial,
+    worldtime,
+)
 from . import endings as ending_logic
 from . import search as search_logic
+from . import testimony as testimony_logic
 from .audio import audio
 from .case_cutscenes import cutscene_for
 from .config import *
@@ -27,7 +38,14 @@ from .save_system import (
     save_game,
     save_settings,
 )
-from .ui import board_view, qte_view, search_view, surveillance_view, timeline_view
+from .ui import (
+    board_view,
+    qte_view,
+    search_view,
+    surveillance_view,
+    testimony_view,
+    timeline_view,
+)
 from .ui.artwork import blit_rounded as blit_rounded_image
 from .ui.artwork import clear_cache as clear_artwork_cache
 from .ui.artwork import cover_image
@@ -231,6 +249,18 @@ class Game:
         self.location_id = "office"
         self.dialogue_char = None
         self.dialogue_idx = 0
+        # таймер реплики и отметка «уже штрафовали за повтор в этом разговоре»
+        self.dialogue_timer = 0.0
+        self.dialogue_penalized = False
+        # выбор мотива и способа на экране обвинения
+        self.trial_rects = {}
+        # кнопки «экспертиза» в блокноте
+        self.expertise_rects = {}
+        # сопоставление показаний
+        self.testimony_selected = []
+        self.testimony_message = ""
+        self.testimony_return = "board"
+        self.testimony_rects = {}
         # notebook tab
         self.notebook_tab = "clues"  # clues | suspects | board | notes
         # доска версий
@@ -587,6 +617,12 @@ class Game:
             elif timeline_view.handle_timeline_key(self, event):
                 pass
             return
+        if self.screen_name == "testimony":
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                testimony_view.handle_testimony_click(self, event.pos)
+            elif testimony_view.handle_testimony_key(self, event):
+                pass
+            return
         if self.screen_name == "tail":
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 surveillance_view.handle_click(self, event.pos)
@@ -752,8 +788,24 @@ class Game:
                 self.search.update(self.clock.get_time() / 1000.0)
             except Exception:
                 pass
-            if self.search and self.search.expired:
+            if self.search and getattr(self.search, "caught", False):
+                search_view.stop(
+                    self,
+                    "Патруль заметил вас — обыск прерван. попытка стоила времени.",
+                )
+            elif self.search and self.search.expired:
                 search_view.stop(self, "Время вышло — хозяин вернулся. попытка стоила 10 минут.")
+        if self.screen_name == "dialogue" and self.dialogue_char and self.dialogue_timer > 0:
+            try:
+                dt = self.clock.get_time() / 1000.0
+            except Exception:
+                dt = 1.0 / FPS
+            self._update_dialogue_timer(dt)
+        if self.state.case_state == "in_progress":
+            self._check_deadline()
+            # звонок ловит игрока только на карте — не в мини-игре и не в допросе
+            if self.screen_name == "map":
+                self._check_anonymous_call()
         if self.screen_name == "tail":
             try:
                 dt = self.clock.get_time() / 1000.0
@@ -781,6 +833,71 @@ class Game:
                     self._cutscene_done()
                 else:
                     self._speak_cutscene()
+
+    def _update_dialogue_timer(self, dt):
+        """Тикает таймер реплики; на нуле тема закрывается молчанием."""
+        ch = self.dialogue_char
+        topics = (ch or {}).get("dialogue", [])
+        if self.dialogue_idx >= len(topics):
+            self.dialogue_timer = 0.0
+            return
+        topic = topics[self.dialogue_idx]
+        answered = dialogue.chosen(self.state, ch["id"], self.dialogue_idx) is not None
+        if answered or not dialogue.is_interactive(topic):
+            self.dialogue_timer = 0.0
+            return
+        if not pressure.advanced(self.current_case):
+            self.dialogue_timer = 0.0
+            return
+        self.dialogue_timer = max(0.0, self.dialogue_timer - max(0.0, dt))
+        if self.dialogue_timer <= 0:
+            self._dialogue_timeout()
+
+    def _check_deadline(self):
+        """Срок дела: предупреждение, затем принудительное закрытие."""
+        case = self.current_case
+        if not pressure.advanced(case):
+            return
+        if not self.state.deadline_missed and pressure.is_late(self.state, case):
+            self.state.deadline_missed = True
+            self.state.reputation = max(0, int(self.state.reputation) - 1)
+            self.add_notification(
+                "Срок дела вышел: прокурор недоволен, −1 репутация. "
+                "Обвинение всё ещё возможно, но ранг упадёт."
+            )
+            self.audio.play_sfx("fail")
+            save_game(self.state)
+            return
+        if self.state.deadline_missed and pressure.has_slipped_case(self.state, case):
+            self.add_notification("Прокурор закрыл дело: срок истёк окончательно.")
+            self.accusation_selected = None
+            self._finish_case()
+
+    def _check_anonymous_call(self):
+        """Анонимный звонок: иногда наводка, иногда ловушка."""
+        case = self.current_case
+        number = pressure.call_due(self.state, case)
+        if not number:
+            return
+        self.state.calls_seen = number
+        spent = int(self.state.case_time_minutes or 0) + pressure.CALL_MINUTES
+        self.state.case_time_minutes = spent
+        rng = __import__("random").Random(f"{case.get('id', '')}:call:{number}")
+        trap = rng.random() < pressure.CALL_TRAP_CHANCE
+        if trap:
+            self.state.case_time_minutes += pressure.CALL_TRAP_MINUTES
+            self.add_notification(
+                "Звонок: «Он на складе, идите туда сейчас же» — ловушка. "
+                f"Вы потеряли {pressure.CALL_TRAP_MINUTES} минут."
+            )
+            self.audio.play_sfx("fail")
+        else:
+            self.state.reputation = int(self.state.reputation) + 1
+            self.add_notification(
+                "Звонок: аноним подсказал, где искать. +1 репутация за наводку."
+            )
+            self.audio.play_sfx("success")
+        save_game(self.state)
 
     MOODS = {
         "menu": "noir",
@@ -870,6 +987,8 @@ class Game:
                 self.draw_puzzle()
             elif self.screen_name == "timeline":
                 timeline_view.draw_timeline(self)
+            elif self.screen_name == "testimony":
+                testimony_view.draw_testimony(self)
             elif self.screen_name == "tail":
                 surveillance_view.draw(self)
             elif self.screen_name == "route":
@@ -1338,7 +1457,23 @@ class Game:
         self.state.search_found = set()
         self.state.hidden_found = set()
         self.state.tail_done = set()
+        self.state.tail_failed = set()
+        self.state.tail_blocked_until_day = 0
         self.state.exposed_lies = {}
+        self.state.asked_topics = set()
+        self.state.confirmed_clues = set()
+        self.state.fake_clues = set()
+        self.state.deductions = set()
+        self.state.trial_motive = None
+        self.state.trial_method = None
+        self.state.deadline_missed = False
+        self.state.calls_seen = 0
+        self.state.silenced = {}
+        self.testimony_selected = []
+        self.testimony_message = ""
+        self.dialogue_timer = 0.0
+        self.trial_rects = {}
+        self.expertise_rects = {}
         self.state.fight_done = False
         self.state.warrant = False
         self.accusation_selected = None
@@ -1687,13 +1822,15 @@ class Game:
         title_text = raw_title if "ДЕЛО" in raw_title else f"ДЕЛО: {raw_title}"
         case_title = font_title.render(title_text, True, COLOR_ACCENT)
         self.screen.blit(case_title, (layout.header.x + 20, layout.header.y + 8))
+        deadline_chip = pressure.deadline_chip(self.state, self.current_case)
         day_text = font_small.render(
             worldtime.clock_text(self.state.case_time_minutes)
             + f" • Улик: {len(self.state.collected_clues)}/{len(self.current_case['clues'])}"
             f" (нужно {ending_logic.required_clues(self.current_case)})"
-            f" • ★ {self.state.reputation} • ${self.state.money}",
+            f" • ★ {self.state.reputation} • ${self.state.money}"
+            + (f" • {deadline_chip}" if deadline_chip else ""),
             True,
-            COLOR_TEXT_DIM,
+            COLOR_RED if self.state.deadline_missed else COLOR_TEXT_DIM,
         )
         self.screen.blit(day_text, (layout.header.x + 20, layout.header.y + 30))
 
@@ -1792,7 +1929,10 @@ class Game:
             if tail_ready and surveillance_view.start(self):
                 pygame.time.wait(120)
                 return
-            self.add_notification("Сначала найдите зацепку (улику) для слежки")
+            if surveillance.blocked(self.current_case, self.state):
+                self.add_notification(surveillance.block_text(self.current_case, self.state))
+            else:
+                self.add_notification("Сначала найдите зацепку (улику) для слежки")
         if wait_rect.collidepoint(mouse) and pressed and self._click_once():
             location, wait = worldtime.nearest_opening(self.current_case, self.state)
             if not wait:
@@ -2179,16 +2319,61 @@ class Game:
                 btn.draw(self.screen, get_font(11, bold=True))
                 if btn.clicked and not self.search and present:
                     pygame.time.wait(150)
+                    if dialogue.is_silent(self.state, ch["id"]):
+                        self.add_notification(
+                            f"{ch['name']} не станет говорить до следующего дня"
+                        )
+                        self.audio.play_sfx("fail")
+                        continue
                     self.dialogue_char = ch
                     self.dialogue_idx = 0
+                    self.dialogue_penalized = False
                     self.screen_name = "dialogue"
                     self.state.interrogated.add(ch["id"])
+                    self._dialogue_enter(ch)
                 y += 78
         else:
             empty2 = get_font(12).render("Персонажей здесь нет.", True, COLOR_TEXT_DARK)
             self.screen.blit(empty2, (right.x, y))
 
     # ── интерактивный допрос ──────────────────────────────────────────────
+
+    def _dialogue_enter(self, ch):
+        """Открыть тему: отметить «уже спрашивали», оштрафовать за повтор, включить таймер."""
+        topics = ch.get("dialogue", [])
+        if self.dialogue_idx >= len(topics):
+            self.dialogue_timer = 0.0
+            return
+        first = dialogue.mark_asked(self.state, ch["id"], self.dialogue_idx)
+        if (
+            not first
+            and not self.dialogue_penalized
+            and pressure.advanced(self.current_case)
+        ):
+            self.dialogue_penalized = True
+            char_id = ch["id"]
+            self.state.trust[char_id] = (
+                dialogue.trust_of(self.state, char_id) - pressure.REPEAT_TOPIC_TRUST
+            )
+            self.add_notification(f"{ch['name']}: вы уже спрашивали об этом — доверие −1")
+            save_game(self.state)
+        topic = topics[self.dialogue_idx]
+        if pressure.advanced(self.current_case) and dialogue.is_interactive(topic):
+            self.dialogue_timer = pressure.DIALOGUE_SECONDS
+        else:
+            self.dialogue_timer = 0.0
+
+    def _dialogue_timeout(self):
+        """Игрок промолчал: тема закрыта, доверие −1."""
+        ch = self.dialogue_char
+        if not ch:
+            return
+        result = dialogue.decline(self.state, ch, self.dialogue_idx)
+        self.dialogue_timer = 0.0
+        if result.get("status") == "ok":
+            self.add_notification(f"{ch['name']}: вы промолчали — доверие −1")
+            self.audio.play_sfx("fail")
+            save_game(self.state)
 
     def _dialogue_clue_lookup(self):
         case = self.current_case or {}
@@ -2214,6 +2399,9 @@ class Game:
         if delta:
             word = "выросло" if delta > 0 else "упало"
             self.add_notification(f"{ch['name']}: доверие {word} ({delta:+d})")
+        if result.get("silenced_until"):
+            self.add_notification(f"{ch['name']} закрылся: до следующего дня говорить не станет")
+        self.dialogue_timer = 0.0
         save_game(self.state)
 
     def _dialogue_expose(self, ch):
@@ -2247,6 +2435,7 @@ class Game:
         pygame.time.wait(100)
         if self.dialogue_idx + 1 < len(topics):
             self.dialogue_idx += 1
+            self._dialogue_enter(ch)
             return
         self.dialogue_idx = len(topics)
         bonus = dialogue.finish(self.state, ch, self._dialogue_clue_lookup())
@@ -2418,6 +2607,17 @@ class Game:
             f"ТЕМА {index + 1} ИЗ {total}", True, COLOR_TEXT_DARK
         )
         self.screen.blit(label, (panel.x + 22, panel.y + 138))
+        if self.dialogue_timer > 0:
+            frac = max(0.0, min(1.0, self.dialogue_timer / max(0.1, pressure.DIALOGUE_SECONDS)))
+            bar = pygame.Rect(panel.x + 150, panel.y + 140, 180, 10)
+            pygame.draw.rect(self.screen, (40, 40, 50), bar, border_radius=5)
+            col = COLOR_GREEN if frac > 0.4 else (COLOR_RED if frac < 0.2 else COLOR_ACCENT)
+            fill = pygame.Rect(bar.x, bar.y, int(bar.w * frac), bar.h)
+            pygame.draw.rect(self.screen, col, fill, border_radius=5)
+            secs = get_font(10, bold=True).render(
+                f"{max(0, int(self.dialogue_timer + 0.99))} c", True, col
+            )
+            self.screen.blit(secs, (bar.right + 8, panel.y + 137))
         opts = dialogue.options(topic)
         top = panel.y + 158
         if dialogue.topic_locked(topic, self.state, self.current_case):
@@ -2449,6 +2649,11 @@ class Game:
                     prompt,
                 )
             chosen = dialogue.chosen_option(self.state, ch["id"], index, topic)
+            if dialogue.declined(self.state, ch["id"], index):
+                note = get_font(11, bold=True).render(
+                    "ВЫ ПРОМОЛЧАЛИ — доверие −1", True, COLOR_RED
+                )
+                self.screen.blit(note, (panel.x + 22, top + 82))
             if dialogue.lie_exposed(self.state, ch["id"], index):
                 chip = pygame.Rect(panel.x + 22, top + 82, panel.w - 44, 20)
                 pygame.draw.rect(self.screen, (58, 50, 30), chip, border_radius=6)
@@ -2725,22 +2930,41 @@ class Game:
             self.draw_notebook_notes(main)
 
     def draw_notebook_clues(self, rect):
+        mouse = self._to_logical(pygame.mouse.get_pos())
+        pressed = pygame.mouse.get_pressed()[0]
         if not self.current_case:
             return
         font_small = get_font(12)
-        # заголовок
+        court = len(expertise.court_clues(self.current_case, self.state))
         title = get_font(14, bold=True).render(
             f"СОБРАНО УЛИК: {len(self.state.collected_clues)}/{len(self.current_case['clues'])}",
             True,
             COLOR_TEXT,
         )
         self.screen.blit(title, (rect.x + 20, rect.y + 15))
+        if pressure.advanced(self.current_case):
+            court_txt = get_font(11, bold=True).render(
+                f"суд примет: {court}", True, COLOR_GREEN if court else COLOR_TEXT_DIM
+            )
+            self.screen.blit(court_txt, (rect.x + 320, rect.y + 18))
+            lab = get_font(10).render(
+                f"лаборатория: {pressure.LAB_COST} $ и {pressure.LAB_MINUTES} мин, "
+                f"репутация {pressure.LAB_REPUTATION}+",
+                True,
+                COLOR_TEXT_DIM,
+            )
+            self.screen.blit(lab, (rect.right - lab.get_width() - 20, rect.y + 18))
+
+        clues = self.current_case["clues"]
+        # при большом деле строки сжимаются, иначе последние улики не помещаются
+        step = max(40, min(78, (rect.h - 70) // max(1, len(clues))))
+        row_h = step - 6
+        compact = row_h < 62
         y = rect.y + 45
-        # сетка улик
-        for clue in self.current_case["clues"]:
+        for clue in clues:
             collected = clue["id"] in self.state.collected_clues
-            r = pygame.Rect(rect.x + 20, y, rect.w - 40, 70)
-            if r.bottom > rect.bottom - 20:
+            r = pygame.Rect(rect.x + 20, y, rect.w - 40, row_h)
+            if r.bottom > rect.bottom - 14:
                 break
             col = (35, 35, 50) if collected else (25, 25, 30)
             pygame.draw.rect(self.screen, col, r, border_radius=6)
@@ -2751,30 +2975,112 @@ class Game:
                 width=1,
                 border_radius=6,
             )
-            status = "✓" if collected else "?"
             status_col = COLOR_GREEN if collected else COLOR_TEXT_DARK
-            st = get_font(16, bold=True).render(status, True, status_col)
-            self.screen.blit(st, (r.x + 12, r.y + 12))
-            t = get_font(13, bold=True).render(
+            st = get_font(14 if compact else 16, bold=True).render(
+                "✓" if collected else "?", True, status_col
+            )
+            self.screen.blit(st, (r.x + 12, r.y + (row_h - st.get_height()) // 2))
+            name = get_font(12 if compact else 13, bold=True).render(
                 clue["title"] if collected else "???",
                 True,
                 COLOR_TEXT if collected else COLOR_TEXT_DARK,
             )
-            self.screen.blit(t, (r.x + 40, r.y + 12))
-            if collected:
-                desc = font_small.render(clue["desc"][:90], True, COLOR_TEXT_DIM)
-                self.screen.blit(desc, (r.x + 40, r.y + 32))
-                loc = get_location(self.current_case, clue["location"])
-                loc_txt = get_font(10).render(
-                    f"{loc['name'] if loc else clue['location']}", True, COLOR_ACCENT
-                )
-                self.screen.blit(loc_txt, (r.x + 40, r.y + 50))
-            else:
-                hint = font_small.render(
+            self.screen.blit(name, (r.x + 40, r.y + 6))
+            if not collected:
+                hint = get_font(10).render(
                     "(найдите в локациях — ищите значок лупы)", True, COLOR_TEXT_DARK
                 )
-                self.screen.blit(hint, (r.x + 40, r.y + 32))
-            y += 78
+                self.screen.blit(hint, (r.x + 40, r.y + (26 if compact else 32)))
+                y += step
+                continue
+
+            loc = get_location(self.current_case, clue["location"])
+            loc_name = loc["name"] if loc else clue["location"]
+            desc_w = r.w - 420
+            desc = font_small if not compact else get_font(10)
+            desc_line = clue["desc"][: (110 if compact else 90)]
+            self.screen.blit(
+                desc.render(desc_line, True, COLOR_TEXT_DIM), (r.x + 40, r.y + (24 if compact else 32))
+            )
+            if not compact:
+                self.screen.blit(
+                    get_font(10).render(loc_name, True, COLOR_ACCENT), (r.x + 40, r.y + 50)
+                )
+            status = expertise.status(self.current_case, self.state, clue)
+            label = expertise.status_label(self.current_case, self.state, clue)
+            if label:
+                col = {
+                    "confirmed": COLOR_GREEN,
+                    "fake": COLOR_RED,
+                    "hearsay": COLOR_ACCENT,
+                }.get(status, COLOR_TEXT_DIM)
+                chip_txt = get_font(10, bold=True).render(label, True, col)
+                chip = pygame.Rect(
+                    r.right - chip_txt.get_width() - 202,
+                    r.y + (6 if compact else 10),
+                    chip_txt.get_width() + 12,
+                    18,
+                )
+                pygame.draw.rect(self.screen, (26, 26, 34), chip, border_radius=8)
+                pygame.draw.rect(self.screen, col, chip, width=1, border_radius=8)
+                self.screen.blit(chip_txt, (chip.x + 6, chip.y + 3))
+            if (
+                pressure.advanced(self.current_case)
+                and expertise.needs_check(self.current_case, clue)
+                and status == "hearsay"
+            ):
+                afford = pressure.lab_ready(self.state)
+                btn_rect = pygame.Rect(r.right - 190, r.bottom - (40 if compact else 40), 170, 26)
+                if compact:
+                    btn_rect.y = r.y + (row_h - 22) // 2
+                    btn_rect.h = 22
+                hovered = btn_rect.collidepoint(mouse)
+                pygame.draw.rect(
+                    self.screen,
+                    (56, 48, 30) if hovered and afford else (28, 28, 36),
+                    btn_rect,
+                    border_radius=6,
+                )
+                pygame.draw.rect(
+                    self.screen,
+                    COLOR_ACCENT if afford else (70, 70, 80),
+                    btn_rect,
+                    width=1,
+                    border_radius=6,
+                )
+                lab_label = get_font(10, bold=True).render(
+                    f"ЭКСПЕРТИЗА ${pressure.LAB_COST}",
+                    True,
+                    COLOR_ACCENT if afford else COLOR_TEXT_DARK,
+                )
+                self.screen.blit(lab_label, lab_label.get_rect(center=btn_rect.center))
+                self.expertise_rects[clue["id"]] = btn_rect
+                if btn_rect.collidepoint(mouse) and pressed and self._click_once():
+                    result = expertise.submit(self.state, self.current_case, clue)
+                    self._handle_expertise(result)
+                    pygame.time.wait(120)
+            y += step
+
+    def _handle_expertise(self, result):
+        """Уведомления по итогам экспертизы улики."""
+        status = result.get("status")
+        if status == "ok":
+            text = result.get("text", "Экспертиза готова")
+            self.add_notification(text)
+            self.audio.play_sfx("fail" if result.get("fake") else "success")
+            save_game(self.state)
+            return
+        if status == "no_money":
+            self.add_notification(f"Лаборатория берёт ${result.get('need', pressure.LAB_COST)}")
+        elif status == "no_rep":
+            self.add_notification(
+                f"В лаборатории не хотят связываться: нужна репутация {result.get('need')}"
+            )
+        elif status == "already":
+            self.add_notification("Экспертиза по этой улике уже была")
+        else:
+            self.add_notification("Эту улику экспертиза не требуется")
+        self.audio.play_sfx("tick")
 
     def draw_notebook_suspects(self, rect):
         if not self.current_case:
@@ -2864,7 +3170,7 @@ class Game:
         )
         self.screen.blit(instr, (main.x + 20, main.y + 15))
         # сколько улик есть и сколько рекомендуется
-        have = len(self.state.collected_clues)
+        have = ending_logic.clue_count(self.state, self.current_case)
         need = ending_logic.required_clues(self.current_case)
         total_clues = len(self.current_case.get("clues", []))
         if have >= need:
@@ -2935,9 +3241,61 @@ class Game:
                 chk = get_font(20, bold=True).render("✓", True, (10, 10, 10))
                 self.screen.blit(chk, (r.right - 40, r.y + 20))
             y += 102
+        # ── суд: мотив и способ ──────────────────────────────────
+        self.trial_rects = {"motive": {}, "method": {}}
+        if trial.available(self.current_case) and self.accusation_selected:
+            rows = [
+                (trial.MOTIVE, "МОТИВ", trial.motives(self.current_case)),
+                (trial.METHOD, "СПОСОБ", trial.methods(self.current_case)),
+            ]
+            row_y = main.bottom - 156
+            for kind, label, items in rows:
+                head = get_font(11, bold=True).render(label, True, COLOR_ACCENT)
+                self.screen.blit(head, (main.x + 20, row_y + 5))
+                x = main.x + 110
+                for item in items:
+                    text = item["text"]
+                    if len(text) > 46:
+                        text = text[:45].rsplit(" ", 1)[0] + "…"
+                    chip_label = get_font(10, bold=True).render(text, True, COLOR_TEXT)
+                    chip = pygame.Rect(x, row_y, chip_label.get_width() + 18, 24)
+                    if chip.right > main.right - 24:
+                        break
+                    active = trial.selected(self.state, kind) == item["id"]
+                    hovered = chip.collidepoint(mouse)
+                    pygame.draw.rect(
+                        self.screen,
+                        (56, 48, 30) if active else ((34, 34, 44) if hovered else (26, 26, 34)),
+                        chip,
+                        border_radius=6,
+                    )
+                    pygame.draw.rect(
+                        self.screen,
+                        COLOR_ACCENT if active else COLOR_BORDER,
+                        chip,
+                        width=2 if active else 1,
+                        border_radius=6,
+                    )
+                    self.screen.blit(chip_label, (chip.x + 9, chip.y + 6))
+                    self.trial_rects[kind][item["id"]] = chip
+                    if chip.collidepoint(mouse) and pressed and self._click_once():
+                        trial.select_from(self.current_case, self.state, kind, item["id"])
+                        self.audio.play_sfx("tick")
+                        save_game(self.state)
+                    x = chip.right + 8
+                row_y += 30
+            if not trial.ready(self.current_case, self.state):
+                wait_txt = get_font(10).render(
+                    "Прокурор ждёт мотив и способ — без них обвинение не примут",
+                    True,
+                    COLOR_TEXT_DIM,
+                )
+                self.screen.blit(wait_txt, (main.x + 20, row_y + 4))
         # кнопки
         btn_back = Button((main.x + 20, main.bottom - 50, 160, 40), "← ОТМЕНА")
-        can_confirm = self.accusation_selected is not None
+        can_confirm = self.accusation_selected is not None and trial.ready(
+            self.current_case, self.state
+        )
         btn_confirm = Button(
             (main.right - 200, main.bottom - 50, 180, 40),
             "ОБВИНИТЬ!",
@@ -2976,7 +3334,11 @@ class Game:
                 if act == "back":
                     self.screen_name = "map"
                 elif act == "confirm":
-                    self._finish_case()
+                    if not trial.ready(self.current_case, self.state):
+                        self.add_notification("Суд ждёт мотив и способ — выберите их под карточками")
+                        self.audio.play_sfx("tick")
+                    else:
+                        self._finish_case()
                 elif act == "timeline":
                     self.timeline_return = "accusation"
                     self.timeline_selected = None
@@ -3063,6 +3425,27 @@ class Game:
             pygame.draw.rect(self.screen, COLOR_ACCENT, bonus_rect, width=1, border_radius=10)
             self.screen.blit(bonus, (bonus_rect.x + 7, bonus_rect.y + 4))
             extra_x = bonus_rect.right + 6
+        trial_info = resolution.get("trial") or {}
+        if trial_info.get("asked"):
+            if trial_info.get("score") == 2:
+                note_txt, note_col = "МОТИВ И СПОСОБ ДОКАЗАНЫ", COLOR_GREEN
+            elif trial_info.get("score") == 0:
+                note_txt, note_col = "МОТИВ И СПОСОБ НЕ ДОКАЗАНЫ", COLOR_RED
+            else:
+                note_txt, note_col = "СУД ПРИНЯЛ ЧАСТЬ ВЕРСИИ", COLOR_ACCENT
+            note = get_font(9, bold=True).render(note_txt, True, note_col)
+            note_rect = pygame.Rect(extra_x, chip.y, note.get_width() + 14, 20)
+            pygame.draw.rect(self.screen, (26, 30, 26), note_rect, border_radius=10)
+            pygame.draw.rect(self.screen, note_col, note_rect, width=1, border_radius=10)
+            self.screen.blit(note, (note_rect.x + 7, note_rect.y + 4))
+            extra_x = note_rect.right + 6
+        if resolution.get("late"):
+            late = get_font(9, bold=True).render("СРОК ВЫШЕЛ", True, COLOR_RED)
+            late_rect = pygame.Rect(extra_x, chip.y, late.get_width() + 14, 20)
+            pygame.draw.rect(self.screen, (36, 22, 22), late_rect, border_radius=10)
+            pygame.draw.rect(self.screen, COLOR_RED, late_rect, width=1, border_radius=10)
+            self.screen.blit(late, (late_rect.x + 7, late_rect.y + 4))
+            extra_x = late_rect.right + 6
         if getattr(self, "_ending_is_new", False):
             new_rect = pygame.Rect(extra_x, chip.y, 62, 20)
             pygame.draw.rect(self.screen, COLOR_ACCENT, new_rect, border_radius=10)
