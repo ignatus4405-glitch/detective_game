@@ -12,7 +12,7 @@
   #define VERSION GetEnv("VERSION")
 #endif
 #if VERSION == ""
-  #define VERSION "0.1.19"
+  #define VERSION "0.1.20"
 #endif
 #define MyAppVersion VERSION
 #define MyAppExe "DetectiveBlackville.exe"
@@ -79,10 +79,10 @@ Name: "{autodesktop}\{#MyAppLnkName}"; Filename: "{app}\{#MyAppExe}"; Tasks: des
 Name: "{userdesktop}\{#MyAppLnkName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon; IconFilename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
 
 [Run]
-; Обычный запуск из мастера — чекбокс включён по умолчанию
-Filename: "{app}\{#MyAppExe}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
-; Автозапуск после тихого обновления из игры (параметры /SILENT /AUTOLAUNCH=1)
-Filename: "{app}\{#MyAppExe}"; Flags: nowait; Check: ShouldAutoLaunch
+; Обычный запуск из мастера — чекбокс включён по умолчанию, запуск от имени пользователя (не от админа инсталлятора)
+Filename: "{app}\{#MyAppExe}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent runasoriginaluser; WorkingDir: "{app}"
+; Автозапуск после тихого обновления из игры (/SILENT) — runasoriginaluser критичен для _MEI (иначе LoadLibrary python310.dll падает)
+Filename: "{app}\{#MyAppExe}"; Flags: nowait runasoriginaluser; Check: ShouldAutoLaunch; WorkingDir: "{app}"
 
 [Registry]
 ; Для обнаружения установленной версии (для апдейтера — опционально)

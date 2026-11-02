@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.20] — 2026-11-02
+
+### Fixed
+- **Критический фикс запуска после установки:** `Failed to load Python DLL ...\\_MEI...\\python310.dll` при галочке «Запустить» — добавлены `runasoriginaluser` + `WorkingDir: {app}` к обеим записям `[Run]` (иначе инсталлятор запускал игру от имени elevated-пользователя с чужим `%TEMP%` и VCRuntime). Helper-bat очистки `_MEI*` (до/после установки), задержки `timeout` для антивируса/блокировки файла, пауза перед автозапуском.
+
 ## [0.1.19] — 2026-11-02
 
 ### Added
@@ -165,7 +170,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.19...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.20...HEAD
+[0.1.20]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.19...v0.1.20
 [0.1.19]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.18...v0.1.19
 [0.1.18]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.17...v0.1.18
 [0.1.17]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.16...v0.1.17
