@@ -10,12 +10,14 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import ssl
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import zipfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.error import HTTPError, URLError
@@ -261,6 +263,19 @@ def _find_download_url(release_data: dict) -> Optional[str]:
     return release_data.get("html_url")
 
 
+def _find_zip_url(release_data: dict) -> Optional[str]:
+    """Портативный архив с игрой — то, чем апдейтер обновляет файлы сам."""
+    for name in ("DetectiveBlackville-Windows.zip", "DetectiveBlackville-Full.zip"):
+        for asset in release_data.get("assets", []) or []:
+            if asset.get("name") == name:
+                return asset.get("browser_download_url")
+    for asset in release_data.get("assets", []) or []:
+        name = (asset.get("name") or "").lower()
+        if name.endswith(".zip"):
+            return asset.get("browser_download_url")
+    return None
+
+
 def _find_sums_url(release_data: dict) -> Optional[str]:
     for asset in release_data.get("assets", []) or []:
         if (asset.get("name") or "") == "SHA256SUMS.txt":
@@ -288,6 +303,10 @@ def _release_info(tag: str, version: str, *, name: str = "", url: str = "", sour
             f"https://github.com/{GITHUB_REPO}/releases/download/"
             f"{tag if tag.startswith('v') else 'v' + version}/SHA256SUMS.txt"
         ),
+        "zip_url": (
+            f"https://github.com/{GITHUB_REPO}/releases/download/"
+            f"{tag if tag.startswith('v') else 'v' + version}/DetectiveBlackville-Windows.zip"
+        ),
         "body": "",
         "published": "",
         "assets": [],
@@ -312,6 +331,7 @@ def _check_via_api(timeout: float) -> Optional[dict]:
     )
     info["download_url"] = _find_download_url(data)
     info["sums_url"] = _find_sums_url(data) or info["sums_url"]
+    info["zip_url"] = _find_zip_url(data) or info["zip_url"]
     info["body"] = (data.get("body", "") or "")[:2000]
     info["published"] = data.get("published_at", "")
     info["assets"] = data.get("assets", [])
@@ -808,7 +828,8 @@ def build_update_helper_env(
         exe = Path(install_dir) / "DetectiveBlackville.exe"
         env["BLK_EXE"] = str(exe)
         env["BLK_EXENAME"] = "DetectiveBlackville.exe"
-    env["BLK_LOG"] = str(get_update_log_path())
+    # Журнал помощника — тот же, что открывает кнопка «ЖУРНАЛ» в игре.
+    env["BLK_LOG"] = str(get_app_log_path())
     # Файл-флаг: bat создаёт его первой строкой. Игра ждёт его появления и,
     # если помощник не отчитался, запускает установщик напрямую — без «мёртвого» клика.
     env["BLK_READY"] = str(helper_ready_path())
@@ -883,6 +904,269 @@ start "" "%BLK_EXE%"
         return None
 
 
+# ---------------------------------------------------------------------------
+# Обновление файлов из ZIP — без инсталлятора
+# ---------------------------------------------------------------------------
+#
+# Inno Setup на чужой машине может тихо не сработать: нет прав на папку,
+# антивирус придержал скачанный Setup, закрытые файлы, «/DIR» не совпал с
+# реальной папкой. Снаружи это выглядит так, будто обновление «не работает»:
+# игра закрылась, открылась снова — и снова старая версия.
+#
+# Поэтому по умолчанию обновляем саму папку игры: распаковываем архив ещё в
+# работающей игре, а крошечный скрытый помощник (без окна консоли) дожидается
+# выхода игры и копирует файлы поверх. Инсталлятор остаётся запасным путём,
+# когда папка защищена (Program Files) и нужен UAC.
+
+EXE_NAME = "DetectiveBlackville.exe"
+_SAFE_NAME = re.compile(r"[^0-9A-Za-z._-]+")
+
+
+def _safe_slug(value: str) -> str:
+    return _SAFE_NAME.sub("_", str(value))[:32] or "update"
+
+
+def _version_in_dir(path: Path) -> Optional[str]:
+    """Версия из VERSION рядом с exe или в _internal (onedir PyInstaller)."""
+    for candidate in (Path(path) / "VERSION", Path(path) / "_internal" / "VERSION"):
+        try:
+            if candidate.is_file():
+                raw = candidate.read_text(encoding="utf-8", errors="replace").strip().lstrip("vV")
+                if raw:
+                    return raw
+        except Exception:
+            continue
+    return None
+
+
+def _extract_zip_safely(zf: zipfile.ZipFile, dest: Path) -> int:
+    """Распаковка с защитой от путей вида ``../../`` (zip-slip)."""
+    dest = dest.resolve()
+    count = 0
+    for member in zf.infolist():
+        name = member.filename.replace("\\", "/")
+        if name.startswith("/") or ".." in Path(name).parts:
+            log_update(f"пропущен подозрительный файл в архиве: {member.filename}")
+            continue
+        target = (dest / name).resolve()
+        if not str(target).startswith(str(dest)):
+            continue
+        if member.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(member) as src, open(target, "wb") as out:
+            shutil.copyfileobj(src, out, 1024 * 256)
+        count += 1
+    return count
+
+
+def stage_zip_update(
+    zip_path: Path,
+    version: str,
+    target_dir: Optional[Path] = None,
+    work_dir: Optional[Path] = None,
+) -> Path:
+    """Распаковывает архив обновления в отдельную папку, пока игра работает.
+
+    Возвращает папку со «свежими» файлами (её содержимое нужно скопировать в
+    папку игры после выхода). Кидает UpdateCheckError, если архив не похож на
+    сборку игры или версия внутри не та.
+    """
+    zip_path = Path(zip_path)
+    if not zip_path.is_file():
+        raise UpdateCheckError(f"архив обновления не найден: {zip_path}")
+    target = Path(target_dir) if target_dir is not None else get_install_dir()
+    work_root = Path(work_dir or tempfile.gettempdir())
+    stage_root = work_root / f"blackville_stage_{_safe_slug(version)}_{os.getpid()}"
+    stage = stage_root / "files"
+    try:
+        if stage_root.exists():
+            shutil.rmtree(stage_root, ignore_errors=True)
+        stage.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(zip_path) as zf:
+            extracted = _extract_zip_safely(zf, stage)
+        log_update(f"распаковано {extracted} файлов в {stage}")
+
+        # В архиве обычно верхняя папка DetectiveBlackville/ — поднимаем её.
+        entries = list(stage.iterdir())
+        if len(entries) == 1 and entries[0].is_dir():
+            inner = entries[0]
+            if (inner / EXE_NAME).exists() or (inner / "_internal").exists():
+                stage = inner
+
+        if not (stage / EXE_NAME).exists():
+            raise UpdateCheckError("в архиве нет DetectiveBlackville.exe")
+        found = _version_in_dir(stage)
+        if found and version and found != str(version).lstrip("vV"):
+            raise UpdateCheckError(f"в архиве версия {found}, ожидалась {version}")
+        log_update(
+            f"обновление подготовлено: {stage} (версия {found or 'не указана'}, "
+            f"цель {target})"
+        )
+        return stage
+    except UpdateCheckError:
+        raise
+    except Exception as e:
+        raise UpdateCheckError(f"не удалось распаковать архив: {e}") from e
+
+
+def _write_hidden_launcher(bat_path: Path, env: dict) -> Optional[Path]:
+    """VBS-запускалка: стартует bat с невидимым окном (без чёрной консоли)."""
+    try:
+        vbs = Path(tempfile.gettempdir()) / f"blackville_run_{os.getpid()}.vbs"
+        content = (
+            "' Blackville: runs the update helper with no visible console window.\r\n"
+            "If WScript.Arguments.Count = 0 Then WScript.Quit 1\r\n"
+            "Dim sh, cmd\r\n"
+            "Set sh = CreateObject(\"WScript.Shell\")\r\n"
+            "cmd = \"cmd /c \" & Chr(34) & WScript.Arguments(0) & Chr(34)\r\n"
+            "sh.Run cmd, 0, False\r\n"
+        )
+        vbs.write_text(content, encoding="ascii", errors="ignore")
+        wscript = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "wscript.exe"
+        exe = str(wscript) if wscript.exists() else "wscript.exe"
+        subprocess.Popen(
+            [exe, "//B", str(vbs), str(bat_path)],
+            env=env,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW
+            close_fds=True,
+        )
+        return vbs
+    except Exception as e:
+        log_update(f"не удалось запустить помощник скрыто: {e}")
+        return None
+
+
+def build_stage_env(
+    stage_dir: Path,
+    target_dir: Path,
+    version: str,
+) -> dict:
+    """Окружение помощника: все пути — переменными (кириллица в bat не попадает)."""
+    env = dict(os.environ)
+    env["BLK_STAGE"] = str(stage_dir)
+    env["BLK_STAGE_ROOT"] = str(Path(stage_dir).parent)
+    env["BLK_TARGET"] = str(target_dir)
+    env["BLK_EXE"] = str(Path(target_dir) / EXE_NAME)
+    env["BLK_EXENAME"] = EXE_NAME
+    env["BLK_PID"] = str(os.getpid())
+    env["BLK_LOG"] = str(get_app_log_path())
+    env["BLK_READY"] = str(helper_ready_path())
+    env["BLK_VERSION"] = str(version)
+    return env
+
+
+def _stage_bat_script() -> str:
+    """bat-помощник обновления файлов: ждёт выход игры, копирует архив поверх."""
+    return r"""@echo off
+setlocal
+if defined BLK_READY >"%BLK_READY%" echo started
+if not defined BLK_STAGE exit /b 1
+if not defined BLK_TARGET exit /b 2
+set BLK_TRIES=0
+:waitgame
+if not defined BLK_PID goto copy
+tasklist /FI "PID eq %BLK_PID%" /NH /FO CSV 2>nul | findstr /C:"%BLK_PID%" >nul
+if errorlevel 1 goto copy
+set /a BLK_TRIES+=1
+if %BLK_TRIES% GEQ 120 goto copy
+ping -n 2 127.0.0.1 >nul
+goto waitgame
+:copy
+ping -n 2 127.0.0.1 >nul
+xcopy "%BLK_STAGE%\*" "%BLK_TARGET%" /E /I /Y /Q /H /R >nul 2>&1
+set BLK_RC=%ERRORLEVEL%
+echo [blackville] xcopy exit code %BLK_RC% >> "%BLK_LOG%"
+rem get_version() reads the root VERSION first: keep it in sync with _internal,
+rem otherwise the stale file makes the game offer the very same update again.
+if exist "%BLK_TARGET%\_internal\VERSION" copy /y "%BLK_TARGET%\_internal\VERSION" "%BLK_TARGET%\VERSION" >nul 2>&1
+if exist "%BLK_TARGET%\VERSION" type "%BLK_TARGET%\VERSION" >> "%BLK_LOG%"
+if exist "%BLK_TARGET%\_internal\VERSION" type "%BLK_TARGET%\_internal\VERSION" >> "%BLK_LOG%"
+if not exist "%BLK_TARGET%\%BLK_EXENAME%" echo [blackville] NEW EXE MISSING >> "%BLK_LOG%"
+if defined BLK_EXE if exist "%BLK_EXE%" start "" "%BLK_EXE%"
+if defined BLK_STAGE_ROOT rmdir /s /q "%BLK_STAGE_ROOT%" 2>nul
+(goto) 2>nul & del "%~f0"
+"""
+
+
+def _create_stage_apply_helper(
+    stage_dir: Path,
+    target_dir: Path,
+    version: str,
+    autolaunch: bool = True,
+) -> Optional[Path]:
+    """bat-помощник: ждёт выхода игры и копирует новые файлы поверх старых."""
+    try:
+        bat_path = Path(tempfile.gettempdir()) / f"blackville_apply_{os.getpid()}.bat"
+        bat_content = _stage_bat_script()
+        bat_path.write_text(bat_content, encoding="ascii", errors="ignore")
+        log_update(
+            f"помощник обновления: {bat_path} (stage={stage_dir}, target={target_dir}, "
+            f"pid={os.getpid()}, version={version})"
+        )
+        return bat_path
+    except Exception as e:
+        log_update(f"не удалось создать помощника обновления: {e}")
+        return None
+
+
+def run_staged_update(
+    stage_dir: Path,
+    target_dir: Optional[Path] = None,
+    version: str = "",
+    autolaunch: bool = True,
+) -> bool:
+    """Копирует распакованное обновление в папку игры после её выхода.
+
+    Возвращает True, если помощник запущен — вызывающий код должен сразу
+    закрыть игру, иначе файлы останутся занятыми.
+    """
+    target = Path(target_dir) if target_dir is not None else get_install_dir()
+    if target is None:
+        log_update("обновление файлов: не удалось определить папку игры")
+        return False
+    if not is_dir_writable(target):
+        log_update(f"обновление файлов: папка {target} недоступна на запись")
+        return False
+    helper = _create_stage_apply_helper(Path(stage_dir), target, version, autolaunch)
+    if not helper:
+        return False
+
+    env = build_stage_env(Path(stage_dir), target, version)
+    ready = Path(env["BLK_READY"])
+    try:
+        ready.unlink()
+    except Exception:
+        pass
+
+    started = False
+    if _write_hidden_launcher(helper, env) and _wait_helper_ready(ready):
+        log_update("помощник обновления запущен и ждёт выхода игры")
+        started = True
+    else:
+        # VBS/wscript заблокирован политикой — запускаем bat напрямую
+        log_update("скрытый запуск не удался — запускаю помощник напрямую")
+        try:
+            subprocess.Popen(
+                ["cmd", "/c", str(helper)],
+                env=env,
+                creationflags=0x08000000,
+                close_fds=True,
+            )
+            started = True
+        except Exception as e:
+            log_update(f"прямой запуск помощника не удался: {e}")
+
+    try:
+        ready.unlink()
+    except Exception:
+        pass
+    if started:
+        write_pending_update(version, Path(stage_dir), get_app_log_path())
+    return started
+
+
 def _launch_elevated(exe: Path, args: Sequence[str]) -> bool:
     """Запуск инсталлятора с запросом UAC (нельзя молча писать в Program Files)."""
     try:
@@ -948,12 +1232,15 @@ def run_installer(
                         ready.unlink()
                     except Exception:
                         pass
-                    subprocess.Popen(
-                        ["cmd", "/c", "start", "", str(helper)],
-                        env=env,
-                        creationflags=0x00000008,  # DETACHED_PROCESS
-                        close_fds=True,
-                    )
+                    # Запускаем скрыто (VBS + wscript): раньше при установке
+                    # открывалось чёрное окно консоли.
+                    if not _write_hidden_launcher(helper, env):
+                        subprocess.Popen(
+                            ["cmd", "/c", str(helper)],
+                            env=env,
+                            creationflags=0x08000000,  # CREATE_NO_WINDOW
+                            close_fds=True,
+                        )
                     if _wait_helper_ready(ready):
                         log_update("помощник запущен и ждёт выхода игры")
                         started = True
@@ -1029,6 +1316,8 @@ class UpdateChecker:
         self.downloaded_path: Optional[Path] = None
         self.download_target_version: str = ""
         self.download_error: Optional[str] = None
+        self.download_kind: str = ""  # "zip" — обновляем файлы сами, "setup" — инсталлятор
+        self.staged_path: Optional[Path] = None
 
     @property
     def up_to_date(self) -> bool:
@@ -1065,9 +1354,28 @@ class UpdateChecker:
             self.done = True
             self.checked_at = time.time()
 
+    def preferred_download(self) -> Tuple[str, str]:
+        """Что качать: архив (обновляем файлы сами) или установщик.
+
+        Архив надёжнее: Inno Setup на чужой машине может тихо не сработать
+        (права, антивирус, занятые файлы) — снаружи это выглядит как
+        «обновился, но открылась старая версия».
+        """
+        info = self.result or {}
+        target = get_install_dir()
+        can_apply = sys.platform == "win32" and target is not None and is_dir_writable(target)
+        if can_apply and info.get("zip_url"):
+            return str(info["zip_url"]), "zip"
+        if info.get("download_url"):
+            return str(info["download_url"]), "setup"
+        if info.get("zip_url"):
+            return str(info["zip_url"]), "zip"
+        return "", ""
+
     def start_download(self, progress_callback: Optional[Callable] = None):
         """Начинает загрузку в фоновом потоке."""
-        if not self.result or not self.result.get("download_url"):
+        url, kind = self.preferred_download()
+        if not url:
             self.download_error = "Нет ссылки для загрузки"
             return
         if self.downloading:
@@ -1089,8 +1397,9 @@ class UpdateChecker:
                         except Exception:
                             pass
 
-                url = self.result["download_url"]
-                log_update(f"начата загрузка обновления v{self.download_target_version}")
+                log_update(
+                    f"начата загрузка обновления v{self.download_target_version} ({kind})"
+                )
                 path = download_update(url, progress_callback=progress)
                 if not path:
                     self.download_error = (
@@ -1110,8 +1419,12 @@ class UpdateChecker:
                         pass
                     return
                 self.downloaded_path = path
+                self.download_kind = kind
                 self.download_progress = 100
-                log_update(f"обновление скачано: {path} (sha256: {'ok' if verified else 'не проверено'})")
+                log_update(
+                    f"обновление скачано: {path} ({kind}, "
+                    f"sha256: {'ok' if verified else 'не проверено'})"
+                )
             except Exception as e:
                 self.download_error = str(e)
                 log_update(f"загрузка обновления: ошибка {e}")
@@ -1122,14 +1435,37 @@ class UpdateChecker:
         t.start()
 
     def install(self, silent: Optional[bool] = None) -> bool:
-        """Запускает установку загруженного обновления с автозапуском.
+        """Устанавливает скачанное обновление.
 
-        silent=None — тихо, если папка игры доступна на запись, иначе мастер + UAC.
+        Архив применяем сами (без инсталлятора): распаковываем в отдельную
+        папку и скрытым помощником копируем поверх папки игры после её выхода.
+        Установщик Inno остаётся запасным путём, когда папка защищена.
         """
         if not self.downloaded_path or not self.downloaded_path.exists():
             self.download_error = "Файл обновления не найден"
             return False
         version = self.download_target_version or (self.result or {}).get("latest", "")
-        return run_installer(
-            self.downloaded_path, silent=silent, autolaunch=True, target_version=version
+        path = Path(self.downloaded_path)
+
+        if path.suffix.lower() == ".zip":
+            try:
+                self.staged_path = stage_zip_update(path, version)
+            except UpdateCheckError as e:
+                self.download_error = f"Не удалось подготовить обновление: {e}"
+                log_update(f"подготовка обновления из архива не удалась: {e}")
+                return False
+            if run_staged_update(self.staged_path, version=version, autolaunch=True):
+                return True
+            self.download_error = (
+                "Не удалось запустить обновление файлов. Скачайте установщик вручную "
+                "со страницы релиза"
+            )
+            log_update("копирование файлов обновления не запустилось")
+            return False
+
+        if run_installer(path, silent=silent, autolaunch=True, target_version=version):
+            return True
+        self.download_error = (
+            "Не удалось запустить установщик. Откройте журнал и скачайте обновление вручную"
         )
+        return False

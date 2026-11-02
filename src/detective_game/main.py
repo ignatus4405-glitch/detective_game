@@ -210,6 +210,8 @@ class Game:
             self.update_checker.start()
         self.update_notified = False
         self.update_dismissed = False
+        # результат неудачной установки из прошлого запуска (показываем баннером)
+        self.failed_update = None
         # --- Новые виджеты настроек ---
         self._init_settings_widgets()
         # notifications queue
@@ -224,7 +226,12 @@ class Game:
         self.start_time = time.time()
 
     def _report_update_result(self, result):
-        """Показывает, чем закончилась установка обновления из прошлого запуска."""
+        """Показывает, чем закончилась установка обновления из прошлого запуска.
+
+        Неудачу держим на экране баннером, а не 4-секундным уведомлением:
+        раньше игрок видел «старую версию и предложение обновиться снова»
+        и не понимал, что именно сломалось.
+        """
         if not result:
             return
         if result.get("status") == "installed":
@@ -234,10 +241,8 @@ class Game:
         target = result.get("target", "?")
         current = result.get("current", "?")
         log_update(f"обновление до v{target} не установилось (у вас v{current})")
-        self.add_notification(
-            f"Обновление до v{target} не установилось (у вас v{current}). "
-            "Настройки → «Проверить обновления» → «Журнал»"
-        )
+        self.failed_update = result
+        self.update_dismissed = False
 
     def _init_settings_widgets(self):
         # Дропдауны и слайдеры для настроек
@@ -397,8 +402,11 @@ class Game:
             if self.update_checker.install():
                 pygame.quit()
                 sys.exit(0)
+            # Причину показываем текстом: иначе игрок видит только «не сработало»
+            reason = getattr(self.update_checker, "download_error", None)
             self.add_notification(
-                "Не удалось запустить установщик — откройте папку загрузок кнопкой «Папка»"
+                reason
+                or "Не удалось запустить установщик — откройте папку загрузок кнопкой «Папка»"
             )
         except Exception as e:
             self.add_notification(f"Ошибка установки: {e}")
@@ -2253,6 +2261,56 @@ class Game:
             # В настройках уже есть детальная панель — баннер не мешаем
             return
         checker = self.update_checker
+
+        # Обновление скачали и запустили, но версия не сменилась — самый
+        # непонятный случай: показываем баннер, пока игрок не закроет.
+        if self.failed_update:
+            rect = pygame.Rect(WINDOW_WIDTH // 2 - 380, 10, 760, 74)
+            pygame.draw.rect(self.screen, (58, 22, 26), rect, border_radius=8)
+            pygame.draw.rect(self.screen, COLOR_RED, rect, width=2, border_radius=8)
+            target = self.failed_update.get("target", "?")
+            current = self.failed_update.get("current", "?")
+            self.screen.blit(
+                get_font(11, bold=True).render(
+                    f"Обновление до v{target} не установилось — открыта v{current}",
+                    True,
+                    (255, 200, 200),
+                ),
+                (rect.x + 15, rect.y + 8),
+            )
+            draw_text_wrapped(
+                self.screen,
+                "Файлы не заменились. Откройте журнал, чтобы увидеть код ошибки, "
+                "или скачайте установщик вручную со страницы релиза.",
+                get_font(9),
+                (235, 190, 190),
+                pygame.Rect(rect.x + 15, rect.y + 26, rect.w - 330, 40),
+            )
+            mouse = self._to_logical(pygame.mouse.get_pos())
+            pressed = pygame.mouse.get_pressed()[0]
+            btn_log = Button((rect.right - 300, rect.y + 22, 110, 30), "ЖУРНАЛ")
+            btn_log.update(mouse, pressed)
+            btn_log.draw(self.screen, get_font(8, bold=True))
+            if btn_log.clicked:
+                open_app_log()
+            btn_manual = Button((rect.right - 182, rect.y + 22, 130, 30), "СКАЧАТЬ ВРУЧНУЮ")
+            btn_manual.update(mouse, pressed)
+            btn_manual.draw(self.screen, get_font(8, bold=True))
+            if btn_manual.clicked:
+                try:
+                    import webbrowser
+
+                    webbrowser.open(GITHUB_RELEASES_URL)
+                except Exception:
+                    pass
+            close_rect = pygame.Rect(rect.right - 42, rect.y + 22, 30, 30)
+            pygame.draw.rect(self.screen, (90, 45, 50), close_rect, border_radius=4)
+            x_txt = get_font(12, bold=True).render("×", True, (255, 255, 255))
+            self.screen.blit(x_txt, x_txt.get_rect(center=close_rect.center))
+            if close_rect.collidepoint(mouse) and pressed:
+                self.failed_update = None
+            return
+
         # Сбой проверки — показываем причину на главном экране, а не молчим
         if checker.done and not checker.result and checker.error:
             rect = pygame.Rect(WINDOW_WIDTH // 2 - 360, 10, 720, 62)
