@@ -4,6 +4,7 @@
 
 #define MyAppName "Детектив: Блэквил — Код Города"
 #define MyAppShort "DetectiveBlackville"
+#define MyAppLnkName "Детектив Блэквил"
 #define MyAppPublisher "Sams_studio128"
 #define MyAppURL "https://github.com/ignatus4405-glitch/detective_game"
 #define MyAppId "{{8B1A2F3C-4D5E-6F78-90AB-CDEF12345678}"
@@ -11,7 +12,7 @@
   #define VERSION GetEnv("VERSION")
 #endif
 #if VERSION == ""
-  #define VERSION "0.1.13"
+  #define VERSION "0.1.14"
 #endif
 #define MyAppVersion VERSION
 #define MyAppExe "DetectiveBlackville.exe"
@@ -71,11 +72,11 @@ Source: "..\dist\latest.json"; DestDir: "{app}"; Flags: ignoreversion skipifsour
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; IconFilename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"; Comment: "Нуар-расследование в Блэквиле, 1987"
+Name: "{group}\{#MyAppLnkName}"; Filename: "{app}\{#MyAppExe}"; IconFilename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"; Comment: "Нуар-расследование в Блэквиле, 1987"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{group}\Репозиторий на GitHub"; Filename: "{#MyAppURL}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon; IconFilename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
-Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon; IconFilename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
+Name: "{autodesktop}\{#MyAppLnkName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon; IconFilename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
+Name: "{userdesktop}\{#MyAppLnkName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon; IconFilename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
 
 [Run]
 Filename: "{app}\{#MyAppExe}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent unchecked

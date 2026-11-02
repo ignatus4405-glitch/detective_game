@@ -6,6 +6,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.14] — 2026-11-02
+
+### Fixed
+- **Ярлык не открывался:** `:` в `MyAppName` приводил к невалидному имени `Детектив: Блэквил — Код Города.lnk` → Windows обрезал до `Детектив` без `.lnk` и показывал «Каким образом вы хотите открыть этот файл?». Теперь введён `MyAppLnkName="Детектив Блэквил"` без запрещённых символов для всех `[Icons]` (`{group}`, `{autodesktop}`, `{userdesktop}`), ярлыки создаются с правильной иконкой и `WorkingDir`.
+
+
+
 ## [0.1.13] — 2026-11-02
 
 ### Added
@@ -116,7 +123,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.13...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.14...HEAD
+[0.1.14]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.13...v0.1.14
+[0.1.13]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.12...v0.1.13
 [0.1.13]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.10...v0.1.11
