@@ -1851,11 +1851,10 @@ class Game:
                 btn_install.update(mouse, pressed)
                 btn_install.draw(self.screen, get_font(8, bold=True))
                 if btn_install.clicked:
-                    self.add_notification(f"Запуск установщика: {checker.downloaded_path.name}")
+                    self.add_notification(f"Установка {checker.downloaded_path.name}… игра перезапустится автоматически")
                     try:
                         from .updater import run_installer
-                        if run_installer(checker.downloaded_path):
-                            # Закрываем игру чтобы файлы не были заняты
+                        if run_installer(checker.downloaded_path, silent=True, autolaunch=True):
                             import sys as _sys
                             pygame.quit()
                             _sys.exit(0)
@@ -1980,9 +1979,10 @@ class Game:
                 btn_inst.update(mouse, pressed)
                 btn_inst.draw(self.screen, get_font(9, bold=True))
                 if btn_inst.clicked:
+                    self.add_notification("Установка обновления… игра перезапустится автоматически")
                     try:
                         from .updater import run_installer
-                        if run_installer(checker.downloaded_path):
+                        if run_installer(checker.downloaded_path, silent=True, autolaunch=True):
                             import sys as _sys
                             pygame.quit()
                             _sys.exit(0)
@@ -2026,15 +2026,15 @@ class Game:
             )
             draw_progress_bar(self.screen, bar_rect, prog, radius=5)
         elif getattr(checker, "downloaded_path", None) and checker.downloaded_path.exists():
-            # СКАЧАНО — показываем УСТАНОВИТЬ прямо на главном экране
+            # СКАЧАНО — показываем УСТАНОВИТЬ прямо на главном экране (с автозапуском)
             btn_install = Button((rect.right - 220, rect.y + 12, 150, 26), "▶ УСТАНОВИТЬ", style="success")
             btn_install.update(mouse, pressed)
             btn_install.draw(self.screen, get_font(9, bold=True))
             if btn_install.clicked:
+                self.add_notification("Установка обновления… игра перезапустится автоматически")
                 try:
                     from .updater import run_installer
-                    self.add_notification(f"Запуск установщика: {checker.downloaded_path.name}")
-                    if run_installer(checker.downloaded_path):
+                    if run_installer(checker.downloaded_path, silent=True, autolaunch=True):
                         import sys as _sys
                         pygame.quit()
                         _sys.exit(0)

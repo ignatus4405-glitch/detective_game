@@ -12,7 +12,7 @@
   #define VERSION GetEnv("VERSION")
 #endif
 #if VERSION == ""
-  #define VERSION "0.1.18"
+  #define VERSION "0.1.19"
 #endif
 #define MyAppVersion VERSION
 #define MyAppExe "DetectiveBlackville.exe"
@@ -79,7 +79,10 @@ Name: "{autodesktop}\{#MyAppLnkName}"; Filename: "{app}\{#MyAppExe}"; Tasks: des
 Name: "{userdesktop}\{#MyAppLnkName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon; IconFilename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
 
 [Run]
-Filename: "{app}\{#MyAppExe}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent unchecked
+; Обычный запуск из мастера — чекбокс включён по умолчанию
+Filename: "{app}\{#MyAppExe}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+; Автозапуск после тихого обновления из игры (параметры /SILENT /AUTOLAUNCH=1)
+Filename: "{app}\{#MyAppExe}"; Flags: nowait; Check: ShouldAutoLaunch
 
 [Registry]
 ; Для обнаружения установленной версии (для апдейтера — опционально)
@@ -91,6 +94,11 @@ Root: HKCU; Subkey: "Software\BlackvilleDetective"; ValueType: string; ValueName
 Type: filesandordirs; Name: "{app}\__pycache__"
 
 [Code]
+function ShouldAutoLaunch(): Boolean;
+begin
+  Result := WizardSilent or (ExpandConstant('{param:AUTOLAUNCH|0}') = '1');
+end;
+
 function InitializeSetup(): Boolean;
 begin
   Result := True;

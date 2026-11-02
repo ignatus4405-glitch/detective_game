@@ -1,4 +1,5 @@
 """Проверка и загрузка обновлений через GitHub Releases — с установкой из приложения."""
+
 import json
 import os
 import subprocess
@@ -100,7 +101,7 @@ def download_update(url: str, progress_callback: Optional[Callable[[int, int], N
         except Exception:
             pass
         return None
-    
+
     try:
         # Определяем имя файла
         filename = url.split("/")[-1].split("?")[0]
@@ -109,12 +110,12 @@ def download_update(url: str, progress_callback: Optional[Callable[[int, int], N
             # если имя не распознали — fallback
             ext = ".exe" if ".exe" in url.lower() else ".zip"
             filename = f"DetectiveBlackville-Update-{__version__}{ext}"
-        
+
         # Папка загрузки — Downloads или TEMP
         download_dir = Path.home() / "Downloads"
         if not download_dir.exists():
             download_dir = Path(tempfile.gettempdir())
-        
+
         dest = download_dir / filename
         # Если уже есть — перезаписываем
         if dest.exists():
@@ -122,9 +123,9 @@ def download_update(url: str, progress_callback: Optional[Callable[[int, int], N
                 dest.unlink()
             except Exception:
                 dest = download_dir / f"update-{filename}"
-        
+
         print(f"[Updater] Downloading {url} -> {dest}")
-        
+
         if progress_callback:
             # С requests и прогрессией
             if requests:
@@ -151,7 +152,7 @@ def download_update(url: str, progress_callback: Optional[Callable[[int, int], N
                             f.write(chunk)
             else:
                 urlretrieve(url, str(dest))
-        
+
         if dest.exists() and dest.stat().st_size > 1000:
             return dest
         return None
@@ -177,13 +178,73 @@ def open_download_folder(path: Path):
         except Exception:
             pass
 
-def run_installer(path: Path, silent: bool = False) -> bool:
-    """Запускает инсталлятор/архив для установки обновления и завершает игру.
+def _create_windows_update_helper(installer_path: Path, silent: bool = True, autolaunch: bool = True) -> Optional[Path]:
+    """Создаёт временный bat-файл для безопасного обновления на Windows.
 
-    Для .exe (Inno Setup) — запускает инсталлятор (с /SILENT если silent=True),
-    затем закрывает текущий процесс чтобы файлы могли перезаписаться.
-    Для .zip — открывает папку с архивом.
-    Возвращает True если запуск успешен.
+    Почему нужен helper: игра запущена из Program Files и exe залочен. Если запустить инсталлятор напрямую,
+    он упрётся в CloseApplications/RestartManager. Helper ждёт 2 сек (игра успеет закрыться),
+    запускает инсталлятор в тихом режиме и после завершения автозапускает новую версию.
+    """
+    try:
+        tmp_dir = Path(tempfile.gettempdir())
+        bat_path = tmp_dir / f"blackville_update_{os.getpid()}.bat"
+        log_path = tmp_dir / "blackville_update.log"
+
+        # Аргументы для инсталлятора
+        args = []
+        if silent:
+            args.append("/SILENT")
+            args.append("/CLOSEAPPLICATIONS")
+            if autolaunch:
+                # Инсталлятор 0.1.19+ поддерживает ShouldAutoLaunch через WizardSilent,
+                # но для совместимости передаём и явный параметр
+                args.append("/AUTOLAUNCH=1")
+        else:
+            if autolaunch:
+                args.append("/AUTOLAUNCH=1")
+
+        args_str = " ".join(args)
+        # Логирование поможет диагностике
+        args_str += f' /LOG="{log_path}"'
+
+        installer_str = str(installer_path)
+
+        bat_content = f"""@echo off
+chcp 65001 >nul
+:: Ждём закрытия игры (exe освободится)
+timeout /t 2 /nobreak >nul
+:: Запускаем инсталлятор и ждём завершения
+start "" /wait "{installer_str}" {args_str}
+:: Инсталлятор в тихом режиме сам запустит новую игру через [Run] Check:ShouldAutoLaunch
+:: На случай если автозапуск не сработал (старый инсталлятор) — пробуем запустить вручную
+:: Ищем установленный exe в реестре
+for /f "tokens=2*" %%a in ('reg query "HKCU\\Software\\BlackvilleDetective" /v InstallPath 2^>nul ^| find "InstallPath"') do (
+    if exist "%%b\\DetectiveBlackville.exe" start "" "%%b\\DetectiveBlackville.exe" & goto :done
+)
+:: Fallback — стандартный путь в Program Files
+if exist "%ProgramFiles%\\BlackvilleDetective\\DetectiveBlackville.exe" start "" "%ProgramFiles%\\BlackvilleDetective\\DetectiveBlackville.exe" & goto :done
+if exist "%LOCALAPPDATA%\\Programs\\BlackvilleDetective\\DetectiveBlackville.exe" start "" "%LOCALAPPDATA%\\Programs\\BlackvilleDetective\\DetectiveBlackville.exe" & goto :done
+:done
+:: Самоудаление bat
+(goto) 2>nul & del "%~f0"
+"""
+        bat_path.write_text(bat_content, encoding="cp1251", errors="ignore")
+        return bat_path
+    except Exception as e:
+        print(f"[Updater] helper create failed: {e}")
+        return None
+
+def run_installer(path: Path, silent: bool = False, autolaunch: bool = True) -> bool:
+    """Запускает инсталлятор/архив для установки обновления.
+
+    Для .exe (Inno Setup):
+      - silent=False, autolaunch=True  → интерактивный мастер с чекбоксом «Запустить» включённым по умолчанию (новая логика 0.1.19), плюс AUTOLAUNCH=1 для надёжности
+      - silent=True  → тихий /SILENT /CLOSEAPPLICATIONS (+ /AUTOLAUNCH=1), инсталлятор сам перезапустит игру через ShouldAutoLaunch (WizardSilent)
+
+    Для .zip — открывает папку.
+
+    Возвращает True если запуск успешен. Вызывающий код должен сразу выйти из игры:
+        if run_installer(p): pygame.quit(); sys.exit(0)
     """
     try:
         if not path or not Path(path).exists():
@@ -191,25 +252,50 @@ def run_installer(path: Path, silent: bool = False) -> bool:
             return False
         p = Path(path)
         if p.suffix.lower() == ".exe":
-            # Inno Setup инсталлятор
+            # Формируем аргументы
             args = [str(p)]
             if silent:
                 args.append("/SILENT")
+                args.append("/CLOSEAPPLICATIONS")
+                if autolaunch:
+                    args.append("/AUTOLAUNCH=1")
+            else:
+                # Интерактивный: передаём AUTOLAUNCH чтобы новая версия гарантированно запустилась
+                # даже если пользователь снимет галочку — сработает вторая [Run] запись через param
+                if autolaunch:
+                    args.append("/AUTOLAUNCH=1")
+
             print(f"[Updater] Launching installer: {args}")
+
             if sys.platform == "win32":
-                # Запуск без ожидания, с detached процессом
-                # Используем Popen с creationflags чтобы не блокировать
-                try:
-                    # DETACHED_PROCESS = 0x00000008
-                    subprocess.Popen(args, creationflags=0x00000008, close_fds=True)
-                except TypeError:
-                    # Linux fallback
-                    subprocess.Popen(args)
+                # Для тихого режима используем helper bat чтобы избежать блокировки exe
+                if silent:
+                    helper = _create_windows_update_helper(p, silent=silent, autolaunch=autolaunch)
+                    if helper:
+                        try:
+                            # Запускаем helper detached и сразу выходим из игры
+                            subprocess.Popen(f'cmd /c start "" "{helper}"', shell=True, creationflags=0x00000008, close_fds=True)
+                            return True
+                        except TypeError:
+                            subprocess.Popen(f'cmd /c start "" "{helper}"', shell=True)
+                            return True
+                    # Fallback — прямой запуск
+                    try:
+                        subprocess.Popen(args, creationflags=0x00000008, close_fds=True)
+                    except TypeError:
+                        subprocess.Popen(args)
+                    return True
+                else:
+                    # Интерактивный — можно сразу, игра закроется и инсталлятор покажет wizard
+                    try:
+                        subprocess.Popen(args, creationflags=0x00000008, close_fds=True)
+                    except TypeError:
+                        subprocess.Popen(args)
+                    return True
             else:
                 subprocess.Popen(args)
-            return True
+                return True
         elif p.suffix.lower() == ".zip":
-            # Для zip — распаковка вручную или открытие папки
             open_download_folder(p)
             return True
         else:
@@ -219,17 +305,16 @@ def run_installer(path: Path, silent: bool = False) -> bool:
         print(f"[Updater] run_installer failed: {e}")
         return False
 
-def install_downloaded_update(path: Path) -> bool:
+def install_downloaded_update(path: Path, silent: bool = True) -> bool:
     """Запускает установщик и завершает текущее приложение для обновления.
 
-    Вызывать после успешной загрузки в UI:
+    Рекомендуемый вызов из UI:
         if updater.downloaded_path:
-            install_downloaded_update(updater.downloaded_path)
+            install_downloaded_update(updater.downloaded_path, silent=True)
             pygame.quit(); sys.exit(0)
     """
-    ok = run_installer(path, silent=False)
+    ok = run_installer(path, silent=silent, autolaunch=True)
     if ok:
-        # Даём инсталлятору время стартовать
         try:
             import time
             time.sleep(0.5)
@@ -277,7 +362,7 @@ class UpdateChecker:
         self.downloading = True
         self.download_error = None
         self.download_progress = 0
-        
+
         def _download():
             try:
                 def progress(downloaded, total):
@@ -289,7 +374,7 @@ class UpdateChecker:
                             progress_callback(downloaded, total)
                         except Exception:
                             pass
-                
+
                 url = self.result["download_url"]
                 path = download_update(url, progress_callback=progress)
                 if path:
@@ -301,13 +386,14 @@ class UpdateChecker:
                 self.download_error = str(e)
             finally:
                 self.downloading = False
-        
+
         t = threading.Thread(target=_download, daemon=True)
         t.start()
 
-    def install(self, silent: bool = False) -> bool:
-        """Запускает установку загруженного обновления."""
+    def install(self, silent: bool = True) -> bool:
+        """Запускает установку загруженного обновления с автозапуском."""
         if not self.downloaded_path or not self.downloaded_path.exists():
             self.download_error = "Файл обновления не найден"
             return False
-        return run_installer(self.downloaded_path, silent=silent)
+        # По умолчанию тихий с автозапуском — требование «автозапуск после установки»
+        return run_installer(self.downloaded_path, silent=silent, autolaunch=True)
