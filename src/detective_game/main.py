@@ -66,6 +66,41 @@ def ensure_placeholder_images():
 
 
 class Game:
+    # Базовое логическое разрешение — дизайн 1280×720, масштабируется letterbox на любое окно
+    LOGICAL_W = 1280
+    LOGICAL_H = 720
+
+    def _get_letterbox(self):
+        """Возвращает (scale, ox, oy, w, h) для letterbox-масштабирования."""
+        try:
+            Wp, Hp = self.screen.get_size()
+        except Exception:
+            Wp, Hp = WINDOW_WIDTH, WINDOW_HEIGHT
+        Lw, Lh = self.LOGICAL_W, self.LOGICAL_H
+        if Wp <= 0 or Hp <= 0:
+            return 1.0, 0, 0, Lw, Lh
+        scale = min(Wp / Lw, Hp / Lh)
+        w = int(Lw * scale)
+        h = int(Lh * scale)
+        ox = (Wp - w) // 2
+        oy = (Hp - h) // 2
+        return scale, ox, oy, w, h
+
+    def _to_logical(self, pos):
+        """Переводит физические координаты мыши в логические."""
+        if pos is None:
+            return pos
+        try:
+            scale, ox, oy, w, h = self._get_letterbox()
+            x, y = pos
+            if scale == 0:
+                return pos
+            lx = (x - ox) / scale
+            ly = (y - oy) / scale
+            return (int(lx), int(ly))
+        except Exception:
+            return pos
+
     def _init_display(self):
         # Применяем настройки экрана при старте
         try:
@@ -263,11 +298,19 @@ class Game:
     def run(self):
         while self.running:
             dt = self.clock.tick(FPS)
-            mouse_pos = pygame.mouse.get_pos()
+            # переводим мышь в логические координаты
+            phys_mouse = pygame.mouse.get_pos()
+            mouse_pos = self._to_logical(phys_mouse)
             mouse_pressed = pygame.mouse.get_pressed()[0]
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
+                # транслируем координаты клика в логическую систему
+                if hasattr(event, 'pos'):
+                    try:
+                        event.pos = self._to_logical(event.pos)
+                    except Exception:
+                        pass
                 self.handle_event(event)
             self.update(mouse_pos, mouse_pressed)
             self.draw()
@@ -402,33 +445,57 @@ class Game:
             self.state.total_playtime += 1 / FPS
 
     def draw(self):
-        self.screen.fill(COLOR_BG)
-        # фон — сетка города
-        self.draw_city_background()
-        if self.screen_name == "menu":
-            self.draw_menu()
-        elif self.screen_name == "customization":
-            self.draw_customization()
-        elif self.screen_name == "case_select":
-            self.draw_case_select()
-        elif self.screen_name == "map":
-            self.draw_map()
-        elif self.screen_name == "location":
-            self.draw_location()
-        elif self.screen_name == "dialogue":
-            self.draw_dialogue()
-        elif self.screen_name == "notebook":
-            self.draw_notebook()
-        elif self.screen_name == "accusation":
-            self.draw_accusation()
-        elif self.screen_name == "ending":
-            self.draw_ending()
-        elif self.screen_name == "settings":
-            self.draw_settings()
-        # уведомления поверх всего
-        self.draw_notifications()
-        # проверка обновлений баннер
-        self.draw_update_banner()
+        # Letterbox рендер: рисуем всё на логический холст 1280×720, затем масштабируем
+        real_screen = self.screen
+        logical = pygame.Surface((self.LOGICAL_W, self.LOGICAL_H))
+        self.screen = logical
+        try:
+            self.screen.fill(COLOR_BG)
+            # фон — сетка города
+            self.draw_city_background()
+            if self.screen_name == "menu":
+                self.draw_menu()
+            elif self.screen_name == "customization":
+                self.draw_customization()
+            elif self.screen_name == "case_select":
+                self.draw_case_select()
+            elif self.screen_name == "map":
+                self.draw_map()
+            elif self.screen_name == "location":
+                self.draw_location()
+            elif self.screen_name == "dialogue":
+                self.draw_dialogue()
+            elif self.screen_name == "notebook":
+                self.draw_notebook()
+            elif self.screen_name == "accusation":
+                self.draw_accusation()
+            elif self.screen_name == "ending":
+                self.draw_ending()
+            elif self.screen_name == "settings":
+                self.draw_settings()
+            # уведомления поверх всего
+            self.draw_notifications()
+            # проверка обновлений баннер
+            self.draw_update_banner()
+        finally:
+            self.screen = real_screen
+        # масштабирование letterbox на физический экран
+        try:
+            Wp, Hp = real_screen.get_size()
+        except Exception:
+            Wp, Hp = self.LOGICAL_W, self.LOGICAL_H
+        scale, ox, oy, w, h = self._get_letterbox()
+        # чёрные поля
+        real_screen.fill((0, 0, 0))
+        if w == self.LOGICAL_W and h == self.LOGICAL_H and ox == 0 and oy == 0:
+            real_screen.blit(logical, (0, 0))
+        else:
+            try:
+                # сглаженное масштабирование для retina/улучшенных разрешений
+                scaled = pygame.transform.smoothscale(logical, (w, h))
+            except Exception:
+                scaled = pygame.transform.scale(logical, (w, h))
+            real_screen.blit(scaled, (ox, oy))
 
     def draw_city_background(self):
         W, H = self.screen.get_size()
@@ -500,7 +567,7 @@ class Game:
         b5 = Button((panel_rect.right - 240, btn_y + 60, 160, 40), "ВЫХОД", tooltip="Выйти на рабочий стол")
         buttons.append(("exit", b5))
 
-        mouse = pygame.mouse.get_pos()
+        mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
         for key, btn in buttons:
             btn.update(mouse, pressed)
@@ -538,7 +605,7 @@ class Game:
         font_sub = get_font(14, bold=True)
         font_hint = get_font(11)
         font_btn = get_font(14, bold=True)
-        mouse = pygame.mouse.get_pos()
+        mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
         header_rect = pygame.Rect(30, 15, W - 60, 50)
         draw_panel(self.screen, header_rect)
@@ -760,7 +827,7 @@ class Game:
             # кнопка
             btn_rect = pygame.Rect(rect.x + 20, rect.bottom - 50, rect.w - 40, 40)
             # hover check
-            mouse = pygame.mouse.get_pos()
+            mouse = self._to_logical(pygame.mouse.get_pos())
             hovered = btn_rect.collidepoint(mouse)
             col = COLOR_ACCENT_HOVER if hovered else COLOR_ACCENT
             pygame.draw.rect(self.screen, col, btn_rect, border_radius=6)
@@ -784,7 +851,7 @@ class Game:
                 self.start_case(case["id"])
         # назад
         btn_back = Button((30, H - 40, 160, 30), "← НАЗАД", tooltip="Вернуться в меню")
-        mouse = pygame.mouse.get_pos()
+        mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
         btn_back.update(mouse, pressed)
         btn_back.draw(self.screen, font_btn)
@@ -836,7 +903,7 @@ class Game:
         # доступность обвинения: нужно минимум 3 улики
         can_accuse = len(self.state.collected_clues) >= 3
         btn_accuse.enabled = can_accuse
-        mouse = pygame.mouse.get_pos()
+        mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
         for btn, action in [
             (btn_notebook, "notebook"),
@@ -1006,7 +1073,7 @@ class Game:
         self.screen.blit(type_txt, (header.right - 200, header.y + 20))
         btn_back = Button((header.right - 220, header.y + 10, 100, 30), "← КАРТА")
         btn_notes = Button((header.right - 110, header.y + 10, 90, 30), "БЛОКНОТ")
-        mouse = pygame.mouse.get_pos()
+        mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
         for btn, act in [(btn_back, "map"), (btn_notes, "notebook")]:
             btn.update(mouse, pressed)
@@ -1251,7 +1318,7 @@ class Game:
         y_btn = panel.bottom - 50
         if self.dialogue_idx < len(dialogues):
             btn_next = Button((panel.right - 200, y_btn, 180, 40), "ДАЛЕЕ →", accent=True)
-            mouse = pygame.mouse.get_pos()
+            mouse = self._to_logical(pygame.mouse.get_pos())
             pressed = pygame.mouse.get_pressed()[0]
             btn_next.update(mouse, pressed)
             btn_next.draw(self.screen, font_btn)
@@ -1266,7 +1333,7 @@ class Game:
                 self.screen_name = "location"
         else:
             btn_close = Button((panel.right - 200, y_btn, 180, 40), "ЗАВЕРШИТЬ", accent=True)
-            mouse = pygame.mouse.get_pos()
+            mouse = self._to_logical(pygame.mouse.get_pos())
             pressed = pygame.mouse.get_pressed()[0]
             btn_close.update(mouse, pressed)
             btn_close.draw(self.screen, font_btn)
@@ -1288,7 +1355,7 @@ class Game:
         # вкладки
         tabs = [("clues", "УЛИКИ"), ("suspects", "ДОСЬЕ"), ("notes", "ЗАМЕТКИ")]
         x = header.right - 350
-        mouse = pygame.mouse.get_pos()
+        mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
         for tab_id, label in tabs:
             rect = pygame.Rect(x, header.y + 10, 100, 30)
@@ -1465,7 +1532,7 @@ class Game:
         )
         self.screen.blit(instr, (main.x + 20, main.y + 15))
         # подозреваемые карточки
-        mouse = pygame.mouse.get_pos()
+        mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
         y = main.y + 50
         for sus in self.current_case.get("suspects", []):
@@ -1574,7 +1641,7 @@ class Game:
         )
         self.screen.blit(stats, stats.get_rect(center=(panel.centerx, panel.y + 420)))
         # кнопки
-        mouse = pygame.mouse.get_pos()
+        mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
         btn_menu = Button((panel.x + 40, panel.bottom - 50, 200, 40), "В МЕНЮ")
         btn_replay = Button(
@@ -1611,7 +1678,7 @@ class Game:
         font_small = get_font(11)
         # Адаптивно к текущему размеру окна
         W, H = self.screen.get_size()
-        mouse = pygame.mouse.get_pos()
+        mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
         header = pygame.Rect(30, 15, W - 60, 54)
         draw_panel(self.screen, header)
@@ -1927,7 +1994,7 @@ class Game:
                 # Непрозрачный фон списка
                 pygame.draw.rect(self.screen, (32, 32, 42), list_rect, border_radius=6)
                 pygame.draw.rect(self.screen, COLOR_ACCENT if dd.open else COLOR_BORDER, list_rect, width=2, border_radius=6)
-                mouse = pygame.mouse.get_pos()
+                mouse = self._to_logical(pygame.mouse.get_pos())
                 for i, (val, name) in enumerate(dd.options):
                     opt_rect = pygame.Rect(list_rect.x, list_rect.y + i * 32, list_rect.w, 32)
                     hovered = opt_rect.collidepoint(mouse)
@@ -1973,7 +2040,7 @@ class Game:
                 self.screen.blit(txt, (rect.x + 15, rect.y + 8))
                 sub = get_font(11).render("Готово к установке — нажмите «Установить и перезапустить»", True, (200, 230, 255))
                 self.screen.blit(sub, (rect.x + 15, rect.y + 28))
-                mouse = pygame.mouse.get_pos()
+                mouse = self._to_logical(pygame.mouse.get_pos())
                 pressed = pygame.mouse.get_pressed()[0]
                 btn_inst = Button((rect.right - 220, rect.y + 12, 150, 32), "▶ УСТАНОВИТЬ", style="success")
                 btn_inst.update(mouse, pressed)
@@ -2015,7 +2082,7 @@ class Game:
             "Обновитесь, чтобы получить исправления и новые Дела", True, (200, 255, 200)
         )
         self.screen.blit(sub, (rect.x + 44, rect.y + 28))
-        mouse = pygame.mouse.get_pos()
+        mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
         if checker.downloading:
             bar_rect = pygame.Rect(rect.x + 44, rect.y + 42, 320, 10)

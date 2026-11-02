@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 
 ## [Unreleased]
 
+## [0.1.21] — 2026-11-02
+
+### Fixed
+- **Отображение на всех разрешениях:** внедрён letterbox-рендер — вся игра рисуется в логическом холсте 1280×720 и масштабируется на окно с сохранением пропорций (чёрные поля по краям). Исправлены обрезы в кастомизации (панель 620px вылезала на 720p-окнах с декорациями), меню, карте, локациях, диалогах, блокноте. Мышь корректно транслируется в логические координаты, `draw_city_background` и все панели используют логический размер, шрифты и свечения сохраняют чёткость при `smoothscale`.
+
 ## [0.1.20] — 2026-11-02
 
 ### Fixed
@@ -170,7 +175,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semve
 - GitHub Actions: CI (lint+test), Build (Windows exe), Release (tag → Release)
 - Full documentation for agents and players
 
-[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.20...HEAD
+[Unreleased]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.21...HEAD
+[0.1.21]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.20...v0.1.21
 [0.1.20]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.19...v0.1.20
 [0.1.19]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.18...v0.1.19
 [0.1.18]: https://github.com/ignatus4405-glitch/detective_game/compare/v0.1.17...v0.1.18

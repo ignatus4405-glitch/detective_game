@@ -26,6 +26,9 @@ CASES_DIR = BASE_DIR / "cases"
 # Окно
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 720
+# Базовое логическое разрешение дизайна — рендер идёт сюда, затем масштабируется на физический экран (letterbox)
+BASE_WIDTH = 1280
+BASE_HEIGHT = 720
 FPS = 60
 TITLE = "ДЕТЕКТИВ: БЛЭКВИЛ — Код Города"
 
