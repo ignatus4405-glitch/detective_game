@@ -5,8 +5,10 @@ import time
 
 import pygame
 
-from . import dialogue, get_version_source, puzzles
+from . import board as board_logic
+from . import dialogue, get_version_source, puzzles, surveillance, timeline, worldtime
 from . import endings as ending_logic
+from . import search as search_logic
 from .audio import audio
 from .case_cutscenes import cutscene_for
 from .config import *
@@ -25,6 +27,7 @@ from .save_system import (
     save_game,
     save_settings,
 )
+from .ui import board_view, qte_view, search_view, surveillance_view, timeline_view
 from .ui.artwork import blit_rounded as blit_rounded_image
 from .ui.artwork import clear_cache as clear_artwork_cache
 from .ui.artwork import cover_image
@@ -229,7 +232,32 @@ class Game:
         self.dialogue_char = None
         self.dialogue_idx = 0
         # notebook tab
-        self.notebook_tab = "clues"  # clues | suspects | map
+        self.notebook_tab = "clues"  # clues | suspects | board | notes
+        # доска версий
+        self.board_clue = None
+        self.board_message = ""
+        self.board_rects = {}
+        self.dialogue_lie_rects = {}
+        # реконструкция хронологии
+        self.timeline_selected = None
+        self.timeline_message = ""
+        self.timeline_return = "map"
+        self.timeline_rects = {}
+        # обыск локации и слежка
+        self.search = None
+        self.search_visual = None
+        self.search_rects = {}
+        self.search_start_rect = None
+        self.search_message = ""
+        self.tail = None
+        self.tail_spec = None
+        self.tail_rects = {}
+        self.tail_reward = None
+        self.route_rects = {}
+        self.route_message = ""
+        self.qte = None
+        self.qte_rects = {}
+        self._dev_param = None
         # accusation
         self.accusation_selected = None
         # интерактивная «Школа детектива»
@@ -553,8 +581,32 @@ class Game:
         if self.screen_name == "cutscene":
             self.handle_cutscene_event(event)
             return
+        if self.screen_name == "timeline":
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                timeline_view.handle_timeline_click(self, event.pos)
+            elif timeline_view.handle_timeline_key(self, event):
+                pass
+            return
+        if self.screen_name == "tail":
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                surveillance_view.handle_click(self, event.pos)
+            elif surveillance_view.handle_key(self, event):
+                pass
+            return
+        if self.screen_name == "route":
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                surveillance_view.handle_route_click(self, event.pos)
+            elif surveillance_view.handle_route_key(self, event):
+                pass
+            return
+        if self.screen_name == "qte":
+            self._qte_event(event)
+            return
         if self.screen_name == "dialogue" and self._dialogue_event(event):
             return
+        if self.screen_name == "notebook" and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.notebook_tab == "board" and board_view.handle_board_click(self, event.pos):
+                return
         # Глобально: дропдауны настроек — взаимоисключение и закрытие по клику в пустоту
         if self.screen_name == "settings" and hasattr(self, "resolution_dropdown"):
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -640,6 +692,12 @@ class Game:
                 # Пины ловятся в тех же точках, где нарисованы (раньше клик
                 # проверялся по сырым координатам дела и уходил мимо).
                 if loc_id and loc_id in self.get_available_locations():
+                    location = get_location(self.current_case, loc_id)
+                    if not worldtime.is_open_now(location, self.state.case_time_minutes):
+                        pygame.time.wait(120)
+                        self.add_notification(worldtime.closed_reason(location, self.state.case_time_minutes))
+                        self.audio.play_sfx("fail")
+                        return
                     pygame.time.wait(120)
                     self.location_id = loc_id
                     self.screen_name = "location"
@@ -647,7 +705,15 @@ class Game:
                     save_game(self.state)
         elif self.screen_name == "location":
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                if self.search:
+                    search_view.stop(self)
+                    return
                 self.screen_name = "map"
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if self.search:
+                    search_view.handle_click(self, event.pos)
+                elif search_view.handle_start_click(self, event.pos):
+                    pass
 
     def get_available_locations(self):
         if not self.current_case:
@@ -681,6 +747,25 @@ class Game:
         # обновление времени
         if self.state.case_state == "in_progress":
             self.state.total_playtime += 1 / FPS
+        if self.screen_name == "location" and self.search:
+            try:
+                self.search.update(self.clock.get_time() / 1000.0)
+            except Exception:
+                pass
+            if self.search and self.search.expired:
+                search_view.stop(self, "Время вышло — хозяин вернулся. попытка стоила 10 минут.")
+        if self.screen_name == "tail":
+            try:
+                dt = self.clock.get_time() / 1000.0
+            except Exception:
+                dt = 1.0 / FPS
+            surveillance_view.update(self, dt)
+        if self.screen_name == "qte":
+            try:
+                dt = self.clock.get_time() / 1000.0
+            except Exception:
+                dt = 1.0 / FPS
+            qte_view.update(self, dt)
         if self.screen_name in ("tutorial", "cutscene", "puzzle"):
             try:
                 dt = self.clock.get_time()
@@ -710,6 +795,10 @@ class Game:
         "notebook": "mystery",
         "accusation": "chase",
         "puzzle": "tension",
+        "timeline": "mystery",
+        "tail": "chase",
+        "route": "chase",
+        "qte": "chase",
     }
 
     # у каждого типа локации — своя тема: бар, порт, участок, место преступления
@@ -779,6 +868,14 @@ class Game:
                 self.draw_cutscene()
             elif self.screen_name == "puzzle":
                 self.draw_puzzle()
+            elif self.screen_name == "timeline":
+                timeline_view.draw_timeline(self)
+            elif self.screen_name == "tail":
+                surveillance_view.draw(self)
+            elif self.screen_name == "route":
+                surveillance_view.draw_route(self)
+            elif self.screen_name == "qte":
+                qte_view.draw(self)
             # на катсцене ничего не перекрывает кадр
             if self.screen_name != "cutscene":
                 # уведомления поверх всего
@@ -1232,7 +1329,28 @@ class Game:
         self.state.dialogue_choices = {}
         self.state.trust = {}
         self.state.trust_bonus_taken = set()
+        # механики расследования начинаются с чистого листа
+        self.state.board_links = set()
+        self.state.board_wrong = set()
+        self.state.timeline_order = []
+        self.state.timeline_solved = False
+        self.state.timeline_attempts = 0
+        self.state.search_found = set()
+        self.state.hidden_found = set()
+        self.state.tail_done = set()
+        self.state.exposed_lies = {}
+        self.state.fight_done = False
+        self.state.warrant = False
         self.accusation_selected = None
+        self.board_clue = None
+        self.board_message = ""
+        self.timeline_selected = None
+        self.timeline_message = ""
+        self.search = None
+        self.tail = None
+        self.tail_spec = None
+        self.tail_reward = None
+        self.qte = None
         self.ending_rects = {}
         save_game(self.state)
         self.location_id = "office"
@@ -1434,6 +1552,65 @@ class Game:
         else:
             self.audio.play_sfx("page" if result else "tick")
 
+    def _qte_event(self, event) -> None:
+        """Ввод в драке: стрелки/WASD, Esc, Enter."""
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            qte_view.handle_click(self, event.pos)
+        else:
+            qte_view.handle_key(self, event)
+
+    def submit_puzzle_grid(self):
+        """Проверить сетку алиби."""
+        if not self.puzzle:
+            return
+        before = self.puzzle.success
+        self.puzzle.submit_grid()
+        self._puzzle_sound(before)
+
+    def submit_puzzle_develop(self):
+        """Проверить параметры проявки."""
+        if not self.puzzle:
+            return
+        before = self.puzzle.success
+        self.puzzle.submit_develop()
+        self._puzzle_sound(before)
+
+    def strike_puzzle_align(self):
+        """Приложить отпечаток (игла против метки)."""
+        if not self.puzzle:
+            return
+        before = self.puzzle.success
+        hit = self.puzzle.strike_angle()
+        if self.puzzle.success and not before:
+            self.audio.play_sfx("success")
+        elif self.puzzle.failed:
+            self.audio.play_sfx("fail")
+        else:
+            self.audio.play_sfx("dial" if hit else "tick")
+
+    def assign_puzzle_alibi(self, person: int, place: int):
+        """Поставить человека в место на сетке алиби."""
+        if not self.puzzle or not self.puzzle.assign(person, place):
+            return
+        self.audio.play_sfx("tick")
+
+    def adjust_puzzle_param(self, name: str, delta: int):
+        """Покрутить ползунок проявки."""
+        if not self.puzzle:
+            return
+        self.puzzle.adjust(name, delta)
+        self.audio.play_sfx("slide")
+
+    def _puzzle_sound(self, before: bool) -> None:
+        if not self.puzzle:
+            return
+        if self.puzzle.success and not before:
+            self.audio.play_sfx("success")
+        elif self.puzzle.failed:
+            self.audio.play_sfx("fail")
+        else:
+            self.audio.play_sfx("tick")
+
     def draw_puzzle(self):
         if not self.puzzle:
             self.close_puzzle()
@@ -1511,7 +1688,10 @@ class Game:
         case_title = font_title.render(title_text, True, COLOR_ACCENT)
         self.screen.blit(case_title, (layout.header.x + 20, layout.header.y + 8))
         day_text = font_small.render(
-            f"День {self.state.game_day} • Время: {9 + self.state.case_time_minutes // 60:02d}:{self.state.case_time_minutes % 60:02d} • Улик: {len(self.state.collected_clues)}/{len(self.current_case['clues'])} (нужно {ending_logic.required_clues(self.current_case)})",
+            worldtime.clock_text(self.state.case_time_minutes)
+            + f" • Улик: {len(self.state.collected_clues)}/{len(self.current_case['clues'])}"
+            f" (нужно {ending_logic.required_clues(self.current_case)})"
+            f" • ★ {self.state.reputation} • ${self.state.money}",
             True,
             COLOR_TEXT_DIM,
         )
@@ -1546,7 +1726,16 @@ class Game:
                     self.screen_name = "notebook"
                 elif action == "accuse" and can_accuse:
                     self.accusation_selected = None
-                    self.screen_name = "accusation"
+                    self.timeline_return = "accusation"
+                    self.timeline_selected = None
+                    self.timeline_message = ""
+                    if timeline.available(self.current_case) and not timeline.is_solved(
+                        self.state, self.current_case
+                    ):
+                        # перед обвинением — реконструкция; её можно пропустить
+                        self.screen_name = "timeline"
+                    else:
+                        self.screen_name = "accusation"
 
         # карта дела — художественная карта-картинка (assets/images/maps/…)
         self._draw_case_map(layout.map_rect)
@@ -1564,9 +1753,62 @@ class Game:
                 visited=visited,
                 current=(loc["id"] == self.location_id),
             )
+            if not worldtime.is_open_now(loc, self.state.case_time_minutes):
+                badge = (pin_rect.right - 4, pin_rect.y + 2)
+                pygame.draw.circle(self.screen, (14, 16, 24), badge, 9)
+                pygame.draw.circle(self.screen, (170, 150, 90), badge, 9, 1)
+                pygame.draw.line(self.screen, (200, 180, 110), (badge[0], badge[1]), (badge[0], badge[1] - 5), 2)
+                pygame.draw.line(self.screen, (200, 180, 110), (badge[0], badge[1]), (badge[0] + 4, badge[1] + 2), 2)
+
+        # кнопки на карте: «ЖДАТЬ» и «СЛЕЖКА»
+        action_y = layout.map_rect.y + 10
+        tail_ready = surveillance.available(self.current_case, self.state)
+        tail_rect = pygame.Rect(layout.map_rect.right - 208, action_y, 96, 26)
+        wait_rect = pygame.Rect(layout.map_rect.right - 104, action_y, 96, 26)
+        for rect, label, enabled, action in (
+            (tail_rect, "СЛЕЖКА", tail_ready, "tail"),
+            (wait_rect, "ЖДАТЬ", True, "wait"),
+        ):
+            hovered = rect.collidepoint(mouse) and enabled
+            pygame.draw.rect(
+                self.screen,
+                (52, 46, 32) if hovered else (16, 18, 26),
+                rect,
+                border_radius=6,
+            )
+            pygame.draw.rect(
+                self.screen,
+                COLOR_ACCENT if enabled else (60, 60, 70),
+                rect,
+                width=1,
+                border_radius=6,
+            )
+            chip = get_font(10, bold=True).render(
+                label, True, COLOR_ACCENT if enabled else COLOR_TEXT_DARK
+            )
+            self.screen.blit(chip, chip.get_rect(center=rect.center))
+        self.map_action_rects = {"tail": tail_rect, "wait": wait_rect}
+        if tail_rect.collidepoint(mouse) and pressed and self._click_once():
+            if tail_ready and surveillance_view.start(self):
+                pygame.time.wait(120)
+                return
+            self.add_notification("Сначала найдите зацепку (улику) для слежки")
+        if wait_rect.collidepoint(mouse) and pressed and self._click_once():
+            location, wait = worldtime.nearest_opening(self.current_case, self.state)
+            if not wait:
+                wait = 60
+                self.add_notification("Все локации открыты. Вы ждёте час.")
+            else:
+                self.add_notification(
+                    f"Вы ждёте до открытия «{location['name']}» — {wait} мин."
+                )
+            worldtime.advance(self.state, wait)
+            save_game(self.state)
+            pygame.time.wait(120)
 
         hint = font_small.render(
-            "Нажмите на локацию, чтобы посетить. Серые — недоступны, пока не найдёте зацепку.",
+            "Нажмите на локацию, чтобы посетить. Серые — недоступны, пока не найдёте зацепку. "
+            "Часы работы — на пинах.",
             True,
             COLOR_TEXT_DIM,
         )
@@ -1675,7 +1917,15 @@ class Game:
         btn_back = Button((header.right - 220, header.y + 10, 100, 30), "← КАРТА")
         btn_notes = Button((header.right - 110, header.y + 10, 90, 30), "БЛОКНОТ")
         # подпись типа и района — слева от кнопок и с обрезкой по доступной ширине
-        type_text = type_label(loc) + " • " + loc["district"]
+        type_text = (
+            type_label(loc)
+            + " • "
+            + loc["district"]
+            + " • "
+            + worldtime.hours_label(loc)
+            + " • "
+            + worldtime.clock_text(self.state.case_time_minutes)
+        )
         type_font = get_font(11)
         avail = header.right - 230 - (header.x + 30)
         while type_text and type_font.size(type_text)[0] > avail:
@@ -1694,6 +1944,38 @@ class Game:
         # main
         main_rect = pygame.Rect(20, 75, WINDOW_WIDTH - 40, WINDOW_HEIGHT - 95)
         draw_panel(self.screen, main_rect)
+        if not worldtime.is_open_now(loc, self.state.case_time_minutes):
+            veil = pygame.Surface((main_rect.w, main_rect.h), pygame.SRCALPHA)
+            veil.fill((6, 8, 14, 225))
+            self.screen.blit(veil, main_rect.topleft)
+            reason = worldtime.closed_reason(loc, self.state.case_time_minutes)
+            head = get_font(30, bold=True).render("ЗАКРЫТО", True, COLOR_ACCENT)
+            self.screen.blit(head, head.get_rect(center=(main_rect.centerx, main_rect.y + 150)))
+            sub = get_font(15).render(
+                f"{loc['name']} — часы работы {worldtime.hours_label(loc)}", True, COLOR_TEXT
+            )
+            self.screen.blit(sub, sub.get_rect(center=(main_rect.centerx, main_rect.y + 196)))
+            why = get_font(13).render(reason, True, COLOR_TEXT_DIM)
+            self.screen.blit(why, why.get_rect(center=(main_rect.centerx, main_rect.y + 224)))
+            clock = get_font(13, bold=True).render(
+                worldtime.clock_text(self.state.case_time_minutes), True, COLOR_TEXT_DIM
+            )
+            self.screen.blit(clock, clock.get_rect(center=(main_rect.centerx, main_rect.y + 250)))
+            wait_btn = Button(
+                (main_rect.centerx - 130, main_rect.y + 290, 260, 46),
+                "ПОДОЖДАТЬ ДО ОТКРЫТИЯ",
+                accent=True,
+            )
+            wait_btn.update(mouse, pressed)
+            wait_btn.draw(self.screen, get_font(13, bold=True))
+            if wait_btn.clicked and self._click_once():
+                pygame.time.wait(140)
+                worldtime.wait_until_open(self.state, self.current_case, loc)
+                self.add_notification(
+                    f"Вы прождали до открытия: {worldtime.clock_text(self.state.case_time_minutes)}"
+                )
+                save_game(self.state)
+            return
         # слева — визуал локации
         visual = pygame.Rect(main_rect.x + 15, main_rect.y + 15, 500, 300)
         # иллюстрация локации (по типу), с «погодой»-вуалью для разных мест
@@ -1744,6 +2026,29 @@ class Game:
             caption_text = label if label == district else f"{label} • {district}"
             caption = get_font(10).render(caption_text, True, (200, 196, 180))
             self.screen.blit(caption, (visual.x + 70, visual.bottom - 48))
+        self.search_visual = pygame.Rect(visual)
+        if self.search:
+            search_view.draw_overlay(self, visual)
+        else:
+            search_view.draw_start_button(self, visual)
+        # редкое QTE: в баре можно нарваться на драку (раз в дело)
+        if (
+            loc["id"] == "bar"
+            and not self.search
+            and not self.state.fight_done
+            and qte_view.chance_for(str(self.current_case.get("id", "")))
+        ):
+            brawl = pygame.Rect(visual.x + 12, visual.y + 12, 150, 26)
+            hovered = brawl.collidepoint(mouse)
+            pygame.draw.rect(
+                self.screen, (56, 34, 34) if hovered else (24, 18, 22), brawl, border_radius=6
+            )
+            pygame.draw.rect(self.screen, (190, 90, 80), brawl, width=1, border_radius=6)
+            label = get_font(10, bold=True).render("ЗАГЛЯНУТЬ В ЗАЛ", True, (220, 120, 110))
+            self.screen.blit(label, label.get_rect(center=brawl.center))
+            if brawl.collidepoint(mouse) and pressed and self._click_once():
+                pygame.time.wait(120)
+                qte_view.start(self)
         # описание
         desc_rect = pygame.Rect(main_rect.x + 15, visual.bottom + 15, 500, 100)
         draw_panel(self.screen, desc_rect, color=(22, 22, 30))
@@ -1758,8 +2063,8 @@ class Game:
         right = pygame.Rect(
             main_rect.x + 530, main_rect.y + 15, main_rect.w - 545, main_rect.h - 30
         )
-        # находим улики в этой локации
-        clues_here = [c for c in self.current_case["clues"] if c["location"] == loc["id"]]
+        # находим улики в этой локации (спрятанные появляются после обыска)
+        clues_here = search_logic.visible_clues(self.current_case, loc["id"], self.state)
         chars_here = [ch for ch in self.current_case["characters"] if ch["location"] == loc["id"]]
         y = right.y
         # заголовок улик
@@ -1799,7 +2104,7 @@ class Game:
                     btn = Button((rect.right - 100, rect.y + 12, 85, 28), label, accent=True)
                     btn.update(mouse, pressed)
                     btn.draw(self.screen, get_font(11, bold=True))
-                    if btn.clicked and self._click_once():
+                    if btn.clicked and self._click_once() and not self.search:
                         pygame.time.wait(120)
                         if locked:
                             self.open_puzzle(clue)
@@ -1854,11 +2159,25 @@ class Game:
                     self.screen.blit(role, (role_x, rect.y + 28))
                 bio = get_font(10).render(ch["bio"][:50], True, COLOR_TEXT_DIM)
                 self.screen.blit(bio, (rect.x + 70, rect.y + 45))
-                # кнопка допроса
-                btn = Button((rect.right - 110, rect.y + 20, 95, 30), "ДОПРОСИТЬ")
+                # кнопка допроса: если человек не на месте — когда вернётся
+                present = worldtime.character_present(ch, self.state.case_time_minutes)
+                if not present:
+                    away = get_font(10, bold=True).render("НЕ НА МЕСТЕ", True, COLOR_TEXT_DARK)
+                    self.screen.blit(away, (rect.right - 110, rect.y + 18))
+                    back = get_font(9).render(
+                        worldtime.character_return(ch, self.state.case_time_minutes)[:30],
+                        True,
+                        COLOR_TEXT_DARK,
+                    )
+                    self.screen.blit(back, (rect.right - 110, rect.y + 34))
+                btn = Button(
+                    (rect.right - 110, rect.y + 20, 95, 30),
+                    "ДОПРОСИТЬ",
+                    enabled=present,
+                )
                 btn.update(mouse, pressed)
                 btn.draw(self.screen, get_font(11, bold=True))
-                if btn.clicked:
+                if btn.clicked and not self.search and present:
                     pygame.time.wait(150)
                     self.dialogue_char = ch
                     self.dialogue_idx = 0
@@ -1877,6 +2196,12 @@ class Game:
 
     def _dialogue_choose(self, ch, opt_index):
         """Игрок выбрал реплику — эффекты, уведомления, сохранение."""
+        topics = ch.get("dialogue", [])
+        if self.dialogue_idx < len(topics) and dialogue.topic_locked(
+            topics[self.dialogue_idx], self.state, self.current_case
+        ):
+            self.add_notification(dialogue.lock_hint(topics[self.dialogue_idx], self.current_case))
+            return
         result = dialogue.choose(
             self.state, ch, self.dialogue_idx, opt_index, self._dialogue_clue_lookup()
         )
@@ -1890,6 +2215,31 @@ class Game:
             word = "выросло" if delta > 0 else "упало"
             self.add_notification(f"{ch['name']}: доверие {word} ({delta:+d})")
         save_game(self.state)
+
+    def _dialogue_expose(self, ch):
+        """Уличить персонажа во лжи, предъявив противоречащую улику."""
+        topics = ch.get("dialogue", [])
+        if self.dialogue_idx >= len(topics):
+            return
+        result = dialogue.expose(
+            self.state, ch, self.dialogue_idx, self._dialogue_clue_lookup()
+        )
+        status = result.get("status")
+        if status == "ok":
+            delta = int(result.get("trust_delta", 0) or 0)
+            self.add_notification(f"{ch['name']} уличен во лжи")
+            if delta:
+                self.add_notification(f"{ch['name']}: доверие {delta:+d}")
+            self.audio.play_sfx("success")
+            save_game(self.state)
+        elif status == "need_clue":
+            self.add_notification("Нужна улика, которая противоречит его словам")
+            self.audio.play_sfx("fail")
+        elif status == "already":
+            self.add_notification("Он уже признался — давить некуда")
+        else:
+            self.add_notification("В этих словах не за что зацепиться")
+        pygame.time.wait(120)
 
     def _dialogue_next(self, ch):
         """Следующая тема — или итог допроса с бонусом за доверие."""
@@ -1929,6 +2279,9 @@ class Game:
                 self._dialogue_next(ch)
             else:
                 self.add_notification("Сначала выберите реплику — клавиши 1–3")
+            return True
+        if event.key == pygame.K_l and self.dialogue_idx < len(topics):
+            self._dialogue_expose(ch)
             return True
         if pygame.K_1 <= event.key <= pygame.K_3 and self.dialogue_idx < len(topics):
             topic = topics[self.dialogue_idx]
@@ -2067,6 +2420,26 @@ class Game:
         self.screen.blit(label, (panel.x + 22, panel.y + 138))
         opts = dialogue.options(topic)
         top = panel.y + 158
+        if dialogue.topic_locked(topic, self.state, self.current_case):
+            prompt = dialogue.prompt(topic) or topic.get("q", "")
+            if prompt:
+                self._dialogue_speech(
+                    pygame.Rect(panel.x + 22, top, panel.w - 44, 78), ch["name"], prompt
+                )
+            block = pygame.Rect(panel.x + 22, top + 92, panel.w - 44, 96)
+            draw_panel(self.screen, block, color=(32, 30, 24), border=COLOR_ACCENT, radius=8)
+            self.screen.blit(
+                get_font(13, bold=True).render("ТЕМА ПОКА ЗАКРЫТА", True, COLOR_ACCENT),
+                (block.x + 16, block.y + 14),
+            )
+            draw_text_wrapped(
+                self.screen,
+                dialogue.lock_hint(topic, self.current_case),
+                get_font(12),
+                COLOR_TEXT_DIM,
+                pygame.Rect(block.x + 16, block.y + 40, block.w - 32, 46),
+            )
+            return
         if opts:
             prompt = dialogue.prompt(topic)
             if prompt:
@@ -2076,6 +2449,17 @@ class Game:
                     prompt,
                 )
             chosen = dialogue.chosen_option(self.state, ch["id"], index, topic)
+            if dialogue.lie_exposed(self.state, ch["id"], index):
+                chip = pygame.Rect(panel.x + 22, top + 82, panel.w - 44, 20)
+                pygame.draw.rect(self.screen, (58, 50, 30), chip, border_radius=6)
+                pygame.draw.rect(self.screen, COLOR_ACCENT, chip, width=1, border_radius=6)
+                text = dialogue.lie_reply(self.state, ch["id"], index)
+                self.screen.blit(
+                    get_font(10, bold=True).render(
+                        f"УЛИЧЁН ВО ЛЖИ: {text[:120]}", True, COLOR_ACCENT
+                    ),
+                    (chip.x + 8, chip.y + 4),
+                )
             if chosen is None:
                 hint = get_font(11, bold=True).render(
                     "ВЫБЕРИТЕ, ЧТО СКАЗАТЬ (клик или 1–3):", True, COLOR_ACCENT
@@ -2220,6 +2604,27 @@ class Game:
                 not dialogue.is_interactive(topic)
                 or dialogue.chosen(self.state, ch["id"], self.dialogue_idx) is not None
             )
+            if dialogue.lie(topic) and not dialogue.lie_exposed(
+                self.state, ch["id"], self.dialogue_idx
+            ):
+                has_proof = dialogue.lie_evidence(self.state, topic) is not None
+                lie_rect = pygame.Rect(panel.x + 150, y, 210, 40)
+                lie_btn = Button(
+                    lie_rect,
+                    "УЛИЧИТЬ ВО ЛЖИ",
+                    accent=has_proof,
+                    enabled=has_proof,
+                    tooltip=(
+                        "Предъявить улику, которая противоречит его словам"
+                        if has_proof
+                        else "Нужна улика, которая противоречит его словам"
+                    ),
+                )
+                lie_btn.update(mouse, pygame.mouse.get_pressed()[0])
+                lie_btn.draw(self.screen, font_btn)
+                self.dialogue_lie_rects["lie"] = lie_rect
+                if lie_btn.clicked and self._click_once():
+                    self._dialogue_expose(ch)
             rect = pygame.Rect(panel.right - 210, y, 190, 40)
             hovered = rect.collidepoint(mouse)
             if ready:
@@ -2266,9 +2671,20 @@ class Game:
         draw_panel(self.screen, header)
         t = font_title.render("БЛОКНОТ ДЕТЕКТИВА", True, COLOR_ACCENT)
         self.screen.blit(t, (header.x + 20, header.y + 12))
+        res = get_font(11).render(
+            f"★ репутация {self.state.reputation}   •   ${self.state.money}",
+            True,
+            COLOR_TEXT_DIM,
+        )
+        self.screen.blit(res, (header.x + 20, header.y + 34))
         # вкладки
-        tabs = [("clues", "УЛИКИ"), ("suspects", "ДОСЬЕ"), ("notes", "ЗАМЕТКИ")]
-        x = header.right - 350
+        tabs = [
+            ("clues", "УЛИКИ"),
+            ("suspects", "ДОСЬЕ"),
+            ("board", "ВЕРСИИ"),
+            ("notes", "ЗАМЕТКИ"),
+        ]
+        x = header.right - 460
         mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
         for tab_id, label in tabs:
@@ -2303,6 +2719,8 @@ class Game:
             self.draw_notebook_clues(main)
         elif self.notebook_tab == "suspects":
             self.draw_notebook_suspects(main)
+        elif self.notebook_tab == "board":
+            board_view.draw_board(self, main)
         else:
             self.draw_notebook_notes(main)
 
@@ -2462,6 +2880,12 @@ class Game:
             get_font(12, bold=have >= need).render(clue_line, True, clue_col),
             (main.x + 20, main.y + 34),
         )
+        if self.state.warrant:
+            chip = get_font(11, bold=True).render("ОРДЕР НА РУКАХ", True, COLOR_GREEN)
+            rect = pygame.Rect(main.right - chip.get_width() - 34, main.y + 32, chip.get_width() + 20, 20)
+            pygame.draw.rect(self.screen, (26, 42, 30), rect, border_radius=9)
+            pygame.draw.rect(self.screen, COLOR_GREEN, rect, width=1, border_radius=9)
+            self.screen.blit(chip, (rect.x + 10, rect.y + 4))
         # подозреваемые карточки
         mouse = self._to_logical(pygame.mouse.get_pos())
         pressed = pygame.mouse.get_pressed()[0]
@@ -2500,6 +2924,9 @@ class Game:
                 get_font(10, bold=True).render(ev_text.upper(), True, ev_col),
                 (r.x + 20, r.y + 58),
             )
+            if board_logic.conclusion_for(self.current_case, self.state, sus):
+                tag = get_font(9, bold=True).render("ВЕРСИЯ СОБРАНА", True, COLOR_GREEN)
+                self.screen.blit(tag, (r.right - tag.get_width() - 60, r.bottom - 18))
             # кликабельность — один выбор на нажатие
             if r.collidepoint(mouse) and pressed and self._click_once():
                 self.accusation_selected = sus["id"]
@@ -2517,15 +2944,54 @@ class Game:
             accent=True,
             enabled=can_confirm,
         )
-        for btn, act in [(btn_back, "back"), (btn_confirm, "confirm")]:
+        btn_timeline = Button(
+            (main.x + 200, main.bottom - 50, 170, 40),
+            "ХРОНОЛОГИЯ",
+            enabled=timeline.available(self.current_case),
+            tooltip="Восстановить порядок событий — ранг финала будет выше",
+        )
+        btn_warrant = Button(
+            (main.x + 390, main.bottom - 50, 200, 40),
+            "ОРДЕР ЗА $200",
+            enabled=self.state.money >= 200 and not self.state.warrant,
+            tooltip="Купить ордер: обвинение откроется даже без улик",
+        )
+        btn_bluff = Button(
+            (main.x + 610, main.bottom - 50, 210, 40),
+            "БЛЕФ (−2 РЕПУТ.)",
+            enabled=self.state.reputation >= 2 and not self.state.warrant,
+            tooltip="Надавить репутацией вместо денег",
+        )
+        for btn, act in [
+            (btn_back, "back"),
+            (btn_confirm, "confirm"),
+            (btn_timeline, "timeline"),
+            (btn_warrant, "warrant"),
+            (btn_bluff, "bluff"),
+        ]:
             btn.update(mouse, pressed)
             btn.draw(self.screen, get_font(13, bold=True))
             if btn.clicked and self._click_once():
                 pygame.time.wait(150)
                 if act == "back":
                     self.screen_name = "map"
-                else:
+                elif act == "confirm":
                     self._finish_case()
+                elif act == "timeline":
+                    self.timeline_return = "accusation"
+                    self.timeline_selected = None
+                    self.timeline_message = ""
+                    self.screen_name = "timeline"
+                elif act == "warrant":
+                    self.state.money -= 200
+                    self.state.warrant = True
+                    self.add_notification("Ордер куплен: $200")
+                    save_game(self.state)
+                elif act == "bluff":
+                    self.state.reputation -= 2
+                    self.state.warrant = True
+                    self.add_notification("Ордер выбит блефом: −2 репутации")
+                    save_game(self.state)
         # подсказка, если доказательств по выбранному мало
         if self.accusation_selected:
             sus = ending_logic.suspect_of(self.current_case, self.accusation_selected) or {}
@@ -2589,8 +3055,16 @@ class Game:
         pygame.draw.rect(self.screen, (34, 34, 44), chip, border_radius=10)
         pygame.draw.rect(self.screen, rank_col, chip, width=1, border_radius=10)
         self.screen.blit(chip_text, (chip.x + 11, chip.y + 4))
+        extra_x = chip.right + 8
+        if resolution.get("timeline_bonus"):
+            bonus = get_font(9, bold=True).render("ХРОНОЛОГИЯ ВОССТАНОВЛЕНА", True, COLOR_ACCENT)
+            bonus_rect = pygame.Rect(extra_x, chip.y, bonus.get_width() + 14, 20)
+            pygame.draw.rect(self.screen, (34, 30, 22), bonus_rect, border_radius=10)
+            pygame.draw.rect(self.screen, COLOR_ACCENT, bonus_rect, width=1, border_radius=10)
+            self.screen.blit(bonus, (bonus_rect.x + 7, bonus_rect.y + 4))
+            extra_x = bonus_rect.right + 6
         if getattr(self, "_ending_is_new", False):
-            new_rect = pygame.Rect(chip.right + 8, chip.y, 62, 20)
+            new_rect = pygame.Rect(extra_x, chip.y, 62, 20)
             pygame.draw.rect(self.screen, COLOR_ACCENT, new_rect, border_radius=10)
             new_txt = get_font(9, bold=True).render("НОВАЯ", True, (12, 12, 12))
             self.screen.blit(new_txt, new_txt.get_rect(center=new_rect.center))

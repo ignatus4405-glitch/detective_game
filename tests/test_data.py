@@ -1,3 +1,5 @@
+import pytest
+
 from detective_game.data import (
     BUILTIN_CASES,
     get_character,
@@ -122,3 +124,46 @@ def test_dialogues_are_long_enough():
                         assert option.get("text") and option.get("reply")
                 else:
                     assert topic.get("q") and topic.get("a")
+
+
+# ── данные новых механик ─────────────────────────────────────────
+
+
+@pytest.mark.parametrize("case", list_cases(), ids=lambda c: c["id"])
+def test_all_cases_have_timeline(case):
+    from detective_game import timeline
+
+    assert timeline.available(case)
+    events = list(timeline.by_id(case).values())
+    assert len(events) >= 4
+    assert all(event["text"] for event in events)
+    assert len({event["time"] for event in events}) >= 3
+
+
+@pytest.mark.parametrize("case", list_cases(), ids=lambda c: c["id"])
+def test_all_cases_have_surveillance(case):
+    from detective_game import surveillance
+
+    spec = surveillance.spec_for(case)
+    assert spec is not None
+    assert any(clue["id"] == spec["reveal"] for clue in case["clues"])
+    assert any(clue["id"] == spec["requires_clue"] for clue in case["clues"])
+    assert len(surveillance.routes_for(case)) >= 2
+
+
+@pytest.mark.parametrize("case", list_cases(), ids=lambda c: c["id"])
+def test_every_case_has_hidden_clue(case):
+    if case["id"] == "tutorial":
+        return  # учебное дело короткое: скрытых улик нет намеренно
+    assert any(clue.get("hidden") for clue in case["clues"])
+
+
+@pytest.mark.parametrize("case", list_cases(), ids=lambda c: c["id"])
+def test_board_fits_every_case(case):
+    from detective_game import board
+
+    for suspect in case["suspects"]:
+        data = board.suspect(case, suspect["id"])
+        assert data is not None
+        for clue_id in data["evidence"]:
+            assert any(clue["id"] == clue_id for clue in case["clues"])

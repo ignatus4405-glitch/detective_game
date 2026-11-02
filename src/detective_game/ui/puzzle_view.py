@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pygame
 
 from ..config import (
@@ -102,10 +104,19 @@ def _draw_footer(surface, puzzle: Puzzle, width: int, height: int) -> dict:
         pygame.draw.rect(surface, COLOR_BORDER, button, width=1, border_radius=8)
         txt = get_font(12, bold=True).render("ПОКАЗАТЬ СНОВА", True, COLOR_TEXT)
         surface.blit(txt, txt.get_rect(center=button.center))
+    elif puzzle.kind in ("alibi", "develop", "align"):
+        label = {"alibi": "ПРОВЕРИТЬ", "develop": "ПРОЯВИТЬ", "align": "СОВМЕСТИТЬ"}[puzzle.kind]
+        button = pygame.Rect(width - 230, y, 210, 40)
+        rects["submit"] = button
+        pygame.draw.rect(surface, COLOR_ACCENT, button, border_radius=8)
+        txt = get_font(13, bold=True).render(label, True, (12, 12, 12))
+        surface.blit(txt, txt.get_rect(center=button.center))
+        esc_hint = get_font(10).render("ПРОБЕЛ — действие", True, COLOR_TEXT_DARK)
+        surface.blit(esc_hint, (button.x - esc_hint.get_width() - 12, button.y + 14))
     msg = puzzle.message
     if msg:
         color = COLOR_GREEN if puzzle.success else (COLOR_RED if puzzle.failed else COLOR_TEXT_DIM)
-        surface.blit(get_font(12, bold=bool(msg)).render(msg, True, color), (190, y + 12))
+        surface.blit(get_font(12, bold=bool(msg)).render(msg, True, color), (350, y + 12))
     return rects
 
 
@@ -298,6 +309,235 @@ def _draw_sequence(surface, puzzle: Puzzle, body: pygame.Rect) -> dict:
     return rects
 
 
+def _draw_alibi(surface, puzzle: Puzzle, body: pygame.Rect) -> dict:
+    """Сетка человек × место: клик по клетке — назначить место."""
+    rects = {"cells": [], "facts": pygame.Rect(0, 0, 0, 0)}
+    grid_w = int(body.w * 0.58)
+    label_w = 150
+    rows = len(puzzle.people)
+    cols = len(puzzle.places)
+    if not rows or not cols:
+        return rects
+    cell_w = max(70, (grid_w - label_w - 20) // cols)
+    cell_h = min(64, max(40, (body.h - 150) // max(1, rows)))
+    top = body.y + 92
+    left = body.x + 26 + label_w
+    surface.blit(
+        get_font(13, bold=True).render("КТО ГДЕ БЫЛ", True, COLOR_ACCENT),
+        (body.x + 26, body.y + 20),
+    )
+    surface.blit(
+        get_font(10).render(
+            "У каждого — одно место, каждое место занято одним человеком",
+            True,
+            COLOR_TEXT_DIM,
+        ),
+        (body.x + 26, body.y + 40),
+    )
+    for col, place in enumerate(puzzle.places):
+        head = get_font(10, bold=True).render(
+            str(place.get("name", place))[:16], True, COLOR_TEXT_DIM
+        )
+        surface.blit(head, (left + col * cell_w + 6, top - 18))
+    mouse = pygame.mouse.get_pos()
+    for row, person in enumerate(puzzle.people):
+        y = top + row * cell_h
+        surface.blit(get_font(12, bold=True).render(str(person)[:18], True, COLOR_TEXT), (body.x + 26, y + cell_h // 2 - 8))
+        for col in range(cols):
+            cell = pygame.Rect(left + col * cell_w, y, cell_w - 6, cell_h - 6)
+            rects["cells"].append((row, col, cell))
+            assigned = puzzle.assignments[row] == col
+            hovered = cell.collidepoint(mouse) and not puzzle.finished
+            if assigned:
+                bg, border = (58, 50, 30), COLOR_ACCENT
+            elif hovered:
+                bg, border = (44, 44, 58), COLOR_BORDER
+            else:
+                bg, border = (28, 28, 36), (48, 48, 58)
+            pygame.draw.rect(surface, bg, cell, border_radius=6)
+            pygame.draw.rect(surface, border, cell, width=2 if assigned else 1, border_radius=6)
+            if assigned:
+                mark = get_font(16, bold=True).render("✓", True, COLOR_ACCENT)
+                surface.blit(mark, mark.get_rect(center=cell.center))
+    # факты справа
+    facts = pygame.Rect(body.x + grid_w + 12, body.y + 20, body.w - grid_w - 38, body.h - 130)
+    rects["facts"] = facts
+    draw_panel(surface, facts, color=PANEL_DARK, radius=8)
+    surface.blit(get_font(11, bold=True).render("ЧТО ИЗВЕСТНО", True, COLOR_ACCENT), (facts.x + 12, facts.y + 10))
+    y = facts.y + 32
+    for fact in puzzle.facts[:8]:
+        lines = wrap_text(f"• {fact}", get_font(11), facts.w - 24)
+        for line in lines:
+            if y > facts.bottom - 18:
+                break
+            surface.blit(get_font(11).render(line, True, COLOR_TEXT), (facts.x + 12, y))
+            y += 15
+        y += 4
+    return rects
+
+
+def _draw_develop(surface, puzzle: Puzzle, body: pygame.Rect) -> dict:
+    """Проявка плёнки: три ползунка и «фотография», которая выходит из тумана."""
+    rects = {"sliders": {}, "minus": {}, "plus": {}}
+    left_w = int(body.w * 0.52)
+    surface.blit(
+        get_font(13, bold=True).render("ПРОЯВКА", True, COLOR_ACCENT), (body.x + 26, body.y + 20)
+    )
+    surface.blit(
+        get_font(10).render(
+            "Крутите параметры: «=» — в зелёной зоне, «↑» — мало, «↓» — много",
+            True,
+            COLOR_TEXT_DIM,
+        ),
+        (body.x + 26, body.y + 40),
+    )
+    labels = {"exposure": "ЭКСПОЗИЦИЯ", "contrast": "КОНТРАСТ", "time": "ВРЕМЯ"}
+    y = body.y + 76
+    for name, value in puzzle.params.items():
+        surface.blit(get_font(11, bold=True).render(labels.get(name, name), True, COLOR_TEXT), (body.x + 26, y))
+        slider = pygame.Rect(body.x + 150, y + 2, left_w - 240, 16)
+        rects["sliders"][name] = slider
+        pygame.draw.rect(surface, (30, 30, 40), slider, border_radius=8)
+        target = puzzle.targets_dev.get(name, 50)
+        tol = puzzle.tolerance
+        zone = pygame.Rect(
+            int(slider.x + max(0, target - tol) / 100 * slider.w),
+            slider.y,
+            max(6, int(2 * tol / 100 * slider.w)),
+            slider.h,
+        )
+        pygame.draw.rect(surface, (32, 74, 46), zone, border_radius=6)
+        pygame.draw.rect(surface, COLOR_GREEN, zone, width=1, border_radius=6)
+        knob = int(slider.x + value / 100 * slider.w)
+        pygame.draw.circle(surface, COLOR_ACCENT, (knob, slider.centery), 9)
+        pygame.draw.circle(surface, (16, 16, 22), (knob, slider.centery), 9, 2)
+        minus = pygame.Rect(slider.right + 10, y - 4, 28, 24)
+        plus = pygame.Rect(minus.right + 6, y - 4, 28, 24)
+        rects["minus"][name] = minus
+        rects["plus"][name] = plus
+        for rect, glyph in ((minus, "−"), (plus, "+")):
+            pygame.draw.rect(surface, (40, 40, 52), rect, border_radius=5)
+            pygame.draw.rect(surface, COLOR_BORDER, rect, width=1, border_radius=5)
+            gl = get_font(13, bold=True).render(glyph, True, COLOR_TEXT)
+            surface.blit(gl, gl.get_rect(center=rect.center))
+        mark = puzzle.develop_feedback.get(name)
+        color = COLOR_TEXT if not mark else (COLOR_GREEN if mark == "=" else COLOR_RED)
+        value_txt = get_font(12, bold=True).render(str(value), True, color)
+        surface.blit(value_txt, (plus.right + 8, y + 2))
+        if mark:
+            word = {"=": "верно", "↑": "мало", "↓": "много"}.get(mark, mark)
+            surface.blit(get_font(9, bold=True).render(word, True, color), (plus.right + 8, y + 19))
+        y += 54
+    # превью снимка
+    photo = pygame.Rect(body.x + left_w + 40, body.y + 70, body.w - left_w - 80, int(body.h * 0.42))
+    rects["photo"] = photo
+    exp = puzzle.params.get("exposure", 50) / 100
+    con = puzzle.params.get("contrast", 50) / 100
+    dev = puzzle.params.get("time", 50) / 100
+    darkness = int(40 + 120 * (1 - dev))
+    for row in range(0, photo.h, 4):
+        t_ratio = row / max(1, photo.h - 1)
+        base = 30 + int(150 * exp) + int(60 * con * (0.5 - abs(0.5 - t_ratio)))
+        shade = max(0, min(255, base - darkness // 2))
+        pygame.draw.rect(
+            surface,
+            (shade, int(shade * 0.97), int(shade * 0.85)),
+            (photo.x, photo.y + row, photo.w, 4),
+        )
+    # силуэт на снимке
+    pygame.draw.circle(surface, (max(0, 40 + int(90 * exp)), 90, 70), (photo.centerx, photo.centery), max(10, photo.h // 5))
+    pygame.draw.rect(
+        surface,
+        (max(0, 35 + int(80 * exp)), 76, 60),
+        (photo.centerx - photo.h // 5, photo.centery, photo.h // 2, photo.h // 2),
+        border_radius=6,
+    )
+    if puzzle.develop_feedback and all(m == "=" for m in puzzle.develop_feedback.values()):
+        pygame.draw.rect(surface, COLOR_GREEN, photo, width=3, border_radius=6)
+    pygame.draw.rect(surface, COLOR_BORDER, photo, width=1, border_radius=6)
+    surface.blit(get_font(10).render("СНИМОК", True, COLOR_TEXT_DIM), (photo.x, photo.y - 16))
+    return rects
+
+
+def _draw_align(surface, puzzle: Puzzle, body: pygame.Rect) -> dict:
+    """Совмещение линий: игла ходит по кругу, пробел — приложить."""
+    rects = {}
+    size = min(body.h - 170, 340)
+    center = (body.x + 60 + size // 2, body.y + 70 + size // 2)
+    radius = size // 2
+    pygame.draw.circle(surface, (26, 26, 34), center, radius)
+    pygame.draw.circle(surface, COLOR_BORDER, center, radius, 2)
+    pygame.draw.circle(surface, (40, 40, 52), center, radius - 46, 2)
+    if getattr(puzzle, "align_mode", "fingerprint") == "voice":
+        # «звуковая дорожка» внутри круга: столбики как в осциллографе
+        import random as _random
+        rng = _random.Random(f"voice:{puzzle.seed}")
+        for i in range(28):
+            angle = i * (6.283185 / 28)
+            height = rng.randint(8, 54)
+            x1 = center[0] + int((radius - 70) * math.cos(angle))
+            y1 = center[1] + int((radius - 70) * math.sin(angle))
+            x2 = center[0] + int((radius - 70 + height) * math.cos(angle))
+            y2 = center[1] + int((radius - 70 + height) * math.sin(angle))
+            pygame.draw.line(surface, (70, 110, 140), (x1, y1), (x2, y2), 2)
+    # метки-цели
+    for target in puzzle.angle_targets:
+        start = -target * 6.283185 + 1.5707963
+        width = max(0.05, puzzle.angle_width) * 6.283185
+        pygame.draw.arc(
+            surface,
+            COLOR_GREEN,
+            pygame.Rect(center[0] - radius + 8, center[1] - radius + 8, 2 * radius - 16, 2 * radius - 16),
+            -start - width / 2,
+            -start + width / 2,
+            10,
+        )
+    # игла
+    angle = puzzle.angle * 6.283185 - 1.5707963
+    tip = (
+        center[0] + int((radius - 18) * math.cos(angle)),
+        center[1] + int((radius - 18) * math.sin(angle)),
+    )
+    pygame.draw.line(surface, COLOR_ACCENT, center, tip, 4)
+    pygame.draw.circle(surface, COLOR_ACCENT, center, 10)
+    # попадания и промахи
+    hits = pygame.Rect(body.x + size + 100, body.y + 80, body.w - size - 150, 120)
+    draw_panel(surface, hits, color=PANEL_DARK, radius=8)
+    mode_label = "СОПОСТАВЛЕНИЕ ГОЛОСА" if getattr(puzzle, "align_mode", "") == "voice" else "СОВПАДЕНИЯ"
+    surface.blit(
+        get_font(11, bold=True).render(mode_label, True, COLOR_ACCENT), (hits.x + 12, hits.y + 10)
+    )
+    for i in range(3):
+        color = COLOR_GREEN if i < puzzle.hits else (52, 52, 62)
+        pygame.draw.circle(surface, color, (hits.x + 24 + i * 30, hits.y + 44), 10)
+    surface.blit(
+        get_font(11).render(
+            f"промахи: {puzzle.misses} из {puzzle.attempts_total}", True,
+            COLOR_RED if puzzle.misses else COLOR_TEXT_DIM,
+        ),
+        (hits.x + 12, hits.y + 66),
+    )
+    tip_rect = pygame.Rect(body.x + size + 100, body.y + 220, body.w - size - 150, 110)
+    draw_panel(surface, tip_rect, color=PANEL_DARK, radius=8)
+    if getattr(puzzle, "align_mode", "fingerprint") == "voice":
+        tip_text = (
+            "Игла ходит по кругу — это две дорожки записи. Нажмите пробел, когда "
+            "пик совпадёт с зелёной меткой. Три совпадения — голос опознан. "
+            "Три промаха — запись смазана."
+        )
+    else:
+        tip_text = (
+            "Игла ходит по кругу. Нажмите пробел, когда она совпадёт с зелёной меткой. "
+            "Три совпадения — отпечатки совпали. Три промаха — плёнка смазана."
+        )
+    for i, line in enumerate(
+        wrap_text(tip_text, get_font(11), tip_rect.w - 24)[:6]
+    ):
+        surface.blit(get_font(11).render(line, True, COLOR_TEXT_DIM), (tip_rect.x + 12, tip_rect.y + 12 + i * 16))
+    rects["dial"] = pygame.Rect(center[0] - radius, center[1] - radius, size, size)
+    return rects
+
+
 def _draw_lock_icon(surface, center, size: int, opened: bool) -> None:
     """Простой навесной замок: дужка + корпус."""
     cx, cy = center
@@ -353,6 +593,12 @@ def draw_puzzle_screen(game) -> None:
         rects = _draw_lockpick(surface, puzzle, body)
     elif puzzle.kind == "wires":
         rects = _draw_wires(surface, puzzle, body)
+    elif puzzle.kind == "alibi":
+        rects = _draw_alibi(surface, puzzle, body)
+    elif puzzle.kind == "develop":
+        rects = _draw_develop(surface, puzzle, body)
+    elif puzzle.kind == "align":
+        rects = _draw_align(surface, puzzle, body)
     else:
         rects = _draw_sequence(surface, puzzle, body)
     _draw_clue_card(surface, game, puzzle, body)
@@ -395,6 +641,28 @@ def handle_puzzle_key(game, event) -> bool:
         if event.key in (pygame.K_SPACE, pygame.K_RETURN) and not puzzle.showing:
             puzzle.restart_sequence()
             return True
+    elif puzzle.kind == "align":
+        if event.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER):
+            game.strike_puzzle_align()
+            return True
+    elif puzzle.kind == "alibi":
+        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            game.submit_puzzle_grid()
+            return True
+    elif puzzle.kind == "develop":
+        names = list(puzzle.params)
+        if pygame.K_1 <= event.key <= pygame.K_3:
+            index = event.key - pygame.K_1
+            if index < len(names):
+                game._dev_param = names[index]
+            return True
+        if event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+            name = getattr(game, "_dev_param", None) or names[0]
+            game.adjust_puzzle_param(name, -5 if event.key == pygame.K_LEFT else 5)
+            return True
+        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            game.submit_puzzle_develop()
+            return True
     return False
 
 
@@ -412,7 +680,14 @@ def handle_puzzle_click(game, pos) -> bool:
             return True
         return True
     if rects.get("submit") and rects["submit"].collidepoint(pos):
-        game.submit_puzzle_code()
+        if puzzle.kind == "alibi":
+            game.submit_puzzle_grid()
+        elif puzzle.kind == "develop":
+            game.submit_puzzle_develop()
+        elif puzzle.kind == "align":
+            game.strike_puzzle_align()
+        else:
+            game.submit_puzzle_code()
         return True
     if rects.get("retry_show") and rects["retry_show"].collidepoint(pos):
         puzzle.restart_sequence()
@@ -437,6 +712,21 @@ def handle_puzzle_click(game, pos) -> bool:
         if rect.collidepoint(pos):
             game.tap_shape(name)
             return True
+    for person, place, rect in rects.get("cells") or []:
+        if rect.collidepoint(pos):
+            game.assign_puzzle_alibi(person, place)
+            return True
+    for name, rect in (rects.get("minus") or {}).items():
+        if rect.collidepoint(pos):
+            game.adjust_puzzle_param(name, -5)
+            return True
+    for name, rect in (rects.get("plus") or {}).items():
+        if rect.collidepoint(pos):
+            game.adjust_puzzle_param(name, 5)
+            return True
+    if puzzle.kind == "align" and rects.get("dial") and rects["dial"].collidepoint(pos):
+        game.strike_puzzle_align()
+        return True
     return True
 
 

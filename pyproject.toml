@@ -1,6 +1,6 @@
 [project]
 name = "detective-game-blackville"
-version = "0.1.36"
+version = "0.1.37"
 description = "Детективная игра в стиле нуар 80-х — интерактивное расследование по мотивам 'Код Города'. Windows, Pygame."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -85,6 +85,27 @@ class GameState:
     unlocked_endings: dict = field(default_factory=dict)
     # успешно закрытые дела — для галочки «ПРОЙДЕНО» и кнопки «СЛЕДУЮЩЕЕ ДЕЛО»
     completed_cases: set = field(default_factory=set)
+    # доска версий: верные и ошибочные связки «улика|подозреваемый»
+    board_links: set = field(default_factory=set)
+    board_wrong: set = field(default_factory=set)
+    # реконструкция: порядок карточек времени и результат
+    timeline_order: list = field(default_factory=list)
+    timeline_solved: bool = False
+    timeline_attempts: int = 0
+    # обыск: найденные точки и раскрытые скрытые улики
+    search_found: set = field(default_factory=set)
+    hidden_found: set = field(default_factory=set)
+    # слежка: дела, где удалось довести объект до места
+    tail_done: set = field(default_factory=set)
+    # разоблачённая ложь: "персонаж:тема" -> ответ персонажа
+    exposed_lies: dict = field(default_factory=dict)
+    # ресурсы детектива
+    reputation: int = 0
+    money: int = 500
+    # ордер на обыск/задержание: куплен или выбит блефом
+    warrant: bool = False
+    # редкое QTE «драка в баре» уже случилось в этом деле
+    fight_done: bool = False
     # meta
     total_playtime: float = 0.0
 
@@ -96,6 +117,13 @@ class GameState:
         d["trust_bonus_taken"] = list(self.trust_bonus_taken)
         d["unlocked_endings"] = {k: list(v) for k, v in self.unlocked_endings.items()}
         d["completed_cases"] = list(self.completed_cases)
+        d["board_links"] = list(self.board_links)
+        d["board_wrong"] = list(self.board_wrong)
+        d["timeline_order"] = list(self.timeline_order)
+        d["search_found"] = list(self.search_found)
+        d["hidden_found"] = list(self.hidden_found)
+        d["tail_done"] = list(self.tail_done)
+        d["exposed_lies"] = dict(self.exposed_lies)
         # dataclass nested
         return d
 
@@ -121,6 +149,19 @@ class GameState:
                 str(k): list(v) for k, v in (data.get("unlocked_endings", {}) or {}).items()
             },
             completed_cases=set(data.get("completed_cases", []) or []),
+            board_links=set(data.get("board_links", []) or []),
+            board_wrong=set(data.get("board_wrong", []) or []),
+            timeline_order=list(data.get("timeline_order", []) or []),
+            timeline_solved=bool(data.get("timeline_solved", False)),
+            timeline_attempts=int(data.get("timeline_attempts", 0) or 0),
+            search_found=set(data.get("search_found", []) or []),
+            hidden_found=set(data.get("hidden_found", []) or []),
+            tail_done=set(data.get("tail_done", []) or []),
+            exposed_lies=dict(data.get("exposed_lies", {}) or {}),
+            reputation=int(data.get("reputation", 0) or 0),
+            money=int(data.get("money", 500) or 0),
+            warrant=bool(data.get("warrant", False)),
+            fight_done=bool(data.get("fight_done", False)),
             total_playtime=data.get("total_playtime", 0.0),
         )
         return obj
