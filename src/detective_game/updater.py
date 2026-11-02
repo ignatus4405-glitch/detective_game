@@ -211,10 +211,18 @@ def _create_windows_update_helper(installer_path: Path, silent: bool = True, aut
 
         bat_content = f"""@echo off
 chcp 65001 >nul
+:: Чистим битые _MEI от прерванных запусков (причина Failed to load Python DLL)
+for /d %%i in ("%TEMP%\\_MEI*") do rd /s /q "%%i" 2>nul
+:: Даём антивирусу отпустить файл после скачивания
+timeout /t 1 /nobreak >nul
 :: Ждём закрытия игры (exe освободится)
 timeout /t 2 /nobreak >nul
 :: Запускаем инсталлятор и ждём завершения
 start "" /wait "{installer_str}" {args_str}
+:: Пауза чтобы инсталлятор завершил запись на диск и снял блокировку
+timeout /t 1 /nobreak >nul
+:: Чистим _MEI ещё раз перед автозапуском (защита от битых распаковок)
+for /d %%i in ("%TEMP%\\_MEI*") do rd /s /q "%%i" 2>nul
 :: Инсталлятор в тихом режиме сам запустит новую игру через [Run] Check:ShouldAutoLaunch
 :: На случай если автозапуск не сработал (старый инсталлятор) — пробуем запустить вручную
 :: Ищем установленный exe в реестре
