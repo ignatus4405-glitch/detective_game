@@ -146,3 +146,28 @@ def cutscene_for(case_id: str) -> Optional[Cutscene]:
 
 def has_cutscene(case_id: str) -> bool:
     return cutscene_for(case_id) is not None
+
+CUTSCENES["last_signal"] = {
+    "title": "Последний сигнал",
+    "subtitle": "Радиостанция «Волна», ночная смена.",
+    "scenes": [
+        Scene(image="cases/last_signal.jpg", label="Улица у станции, 22:05",
+              caption="Дождь глушит антенны. В студии горит лампа «ЭФИР», но ведущая уже не отвечает на звонки.", duration=5.0, pan="in"),
+        Scene(image="locations/radio.jpg", label="Студия, 22:17",
+              caption="В эфир уходит признание, которого никто не произносил. На плёнке — щелчок реле и свежая склейка.", duration=5.5, pan="left"),
+        Scene(image="locations/transmitter.jpg", label="Передатчик, 22:25",
+              caption="Инженер закрывает журнал ремонта. До студии двенадцать минут пешком — и ни одного лишнего следа.", duration=5.5, pan="out"),
+    ],
+}
+CUTSCENES["silent_archive"] = {
+    "title": "Архив молчания",
+    "subtitle": "Городской архив, ночь до суда.",
+    "scenes": [
+        Scene(image="locations/archive_exterior.jpg", label="Архив, 23:40",
+              caption="Пожар начинается в корзине с бумагой. Стеллажи не задеты — кто-то знал, что именно должно сгореть.", duration=5.0, pan="in"),
+        Scene(image="cases/silent_archive.jpg", label="Читальный зал, 20:26",
+              caption="Реестр раскрыт на пустом месте. Страница 47 вырезана по корешку, а контрольный номер остался на соседнем листе.", duration=5.5, pan="right"),
+        Scene(image="locations/archive_vault.jpg", label="Хранилище, 20:41",
+              caption="Ключ возвращён на место. Часы отстают на девять минут — и эта поправка скоро станет важнее признания.", duration=5.5, pan="out"),
+    ],
+}

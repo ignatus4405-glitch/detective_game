@@ -204,7 +204,10 @@ def draw_overlay(game, visual: pygame.Rect) -> None:
         )
         surface.blit(patrol, (bar.x + label.get_width() + 24, bar.y + 10))
     timer_col = COLOR_GREEN if seconds > 20 else (COLOR_ACCENT if seconds > 10 else (210, 90, 90))
-    if getattr(session, "had_clues", True):
+    if getattr(session, "relaxed", False):
+        timer_text = "эксперт · без спешки"
+        timer_col = COLOR_GREEN
+    elif getattr(session, "had_clues", True):
         timer_text = f"{seconds // 60}:{seconds % 60:02d}"
     else:
         timer_text = "без спешки"

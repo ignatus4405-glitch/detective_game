@@ -5,9 +5,15 @@ from typing import Dict, List, Optional
 from .case_endings import ENDING_VARIANTS
 from .case_topics import INTERACTIVE_TOPICS, TRUST_BONUSES
 from .config import CASES_DIR
+from .expert_data import apply as apply_expert_layer
 
 # Карта по умолчанию: у старых дел поля "map" может не быть.
 DEFAULT_CASE_MAP = "maps/blackville.jpg"
+
+
+def case_cover(case: Optional[Dict]) -> str:
+    """Постер дела; у старых делfallback — карта."""
+    return str((case or {}).get("cover") or case_map(case))
 
 
 def case_map(case: Optional[Dict]) -> str:
@@ -221,7 +227,7 @@ def load_case(case_id: str) -> Optional[Dict]:
     if file_path.exists():
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                return apply_expert_layer(json.load(f))
         except Exception:
             pass
     # затем ищем дело по полю id среди всех файлов (например, example.json)
@@ -247,7 +253,7 @@ def list_cases() -> List[Dict]:
         for p in CASES_DIR.glob("*.json"):
             try:
                 with open(p, "r", encoding="utf-8") as f:
-                    cases.append(json.load(f))
+                    cases.append(apply_expert_layer(json.load(f)))
             except Exception:
                 continue
     # встроенные — добавляем если нет дубликатов
@@ -255,6 +261,7 @@ def list_cases() -> List[Dict]:
     for c in BUILTIN_CASES:
         if c["id"] not in existing_ids:
             cases.append(c)
+    cases.sort(key=lambda c: (int(c.get("order", 100)), str(c.get("title", ""))))
     return cases
 
 def get_location(case: Dict, loc_id: str) -> Optional[Dict]:
@@ -518,6 +525,10 @@ def _merge_advanced_rules(cases: list) -> None:
 _merge_interactive_topics(BUILTIN_CASES)
 _merge_ending_variants(BUILTIN_CASES)
 _merge_advanced_rules(BUILTIN_CASES)
+for _case in BUILTIN_CASES:
+    apply_expert_layer(_case)
+for _order, _case in enumerate(BUILTIN_CASES, start=1):
+    _case.setdefault("order", _order)
 
 
 def get_clue(case: Dict, clue_id: str) -> Optional[Dict]:

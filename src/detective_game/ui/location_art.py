@@ -28,6 +28,9 @@ LOCATION_ART: Dict[str, Tuple[str, Optional[Tuple[int, int, int, int]]]] = {
     "warehouse": ("maps/downtown.jpg", (10, 16, 24, 150)),
     "port": ("maps/northport.jpg", (8, 20, 45, 130)),
     "station": ("locations/public.jpg", (60, 45, 15, 80)),
+    "radio": ("locations/radio.jpg", None),
+    "transmitter": ("locations/transmitter.jpg", None),
+    "archive": ("locations/archive_exterior.jpg", None),
 }
 
 
@@ -56,6 +59,9 @@ LOCATION_TYPE_LABELS = {
     "warehouse": "СКЛАД",
     "port": "ПОРТ",
     "station": "ВОКЗАЛ",
+    "radio": "РАДИОСТАНЦИЯ",
+    "transmitter": "ПЕРЕДАТЧИК",
+    "archive": "АРХИВ",
     "office": "КОМНАТА ОХРАНЫ",
 }
 

@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import pygame
 
-from .. import board
+from .. import board, deduction
 from ..config import (
     COLOR_ACCENT,
+    COLOR_ACCENT_DIM,
     COLOR_BORDER,
     COLOR_GREEN,
+    COLOR_PANEL_LIGHT,
     COLOR_RED,
     COLOR_TEXT,
     COLOR_TEXT_DARK,
@@ -38,6 +40,9 @@ def draw_board(game, rect: pygame.Rect) -> None:
     """Нарисовать доску версий во вкладке блокнота."""
     case = game.current_case or {}
     state = game.state
+    if deduction.enabled(case, state):
+        draw_expert_board(game, rect)
+        return
     rects = {"clues": {}, "suspects": {}, "hint": None}
     progress = board.progress(case, state)
 
@@ -205,6 +210,8 @@ def draw_board(game, rect: pygame.Rect) -> None:
 
 def handle_board_click(game, pos) -> bool:
     """Клик по доске: выбрать улику, связать с подозреваемым, взять наводку."""
+    if deduction.enabled(game.current_case, game.state):
+        return handle_expert_board_click(game, pos)
     rects = getattr(game, "board_rects", {}) or {}
     case = game.current_case or {}
     state = game.state
@@ -270,6 +277,129 @@ def handle_board_click(game, pos) -> bool:
         game.state.case_time_minutes += HINT_COST
         game.audio.play_sfx("page")
         save_game(game.state)
+        return True
+    return False
+
+
+def draw_expert_board(game, rect):
+    case, state = game.current_case, game.state
+    mouse = pygame.mouse.get_pos()
+    rects = {"clues": {}, "suspects": {}, "review": None, "alibi": None, "proof": None, "testimony": None}
+    game.screen.blit(get_font(16, bold=True).render("ДОСКА ВЕРСИЙ · ЧЕРНОВИК", True, COLOR_ACCENT), (rect.x + 20, rect.y + 14))
+    meta = f"Связей: {len(state.board_draft)} · проверка версии: {deduction.REVIEW_COST} мин · отдельные связи не оцениваются"
+    game.screen.blit(get_font(11).render(meta, True, COLOR_TEXT_DIM), (rect.x + 20, rect.y + 38))
+    top = rect.y + 66
+    left = pygame.Rect(rect.x + 20, top, 500, rect.bottom - top - 126)
+    right = pygame.Rect(left.right + 20, top, rect.right - left.right - 40, left.h)
+    draw_panel(game.screen, left, color=PANEL_DARK)
+    draw_panel(game.screen, right, color=PANEL_DARK)
+    game.screen.blit(get_font(12, bold=True).render("УЛИКИ", True, COLOR_TEXT), (left.x + 14, left.y + 12))
+    game.screen.blit(get_font(12, bold=True).render("ПОДОЗРЕВАЕМЫЕ", True, COLOR_TEXT), (right.x + 14, right.y + 12))
+    clues = [c for c in case.get("clues", []) if c["id"] in state.collected_clues]
+    scroll = max(0, min(getattr(game, "board_scroll", 0), max(0, len(clues) - 8)))
+    game.board_scroll = scroll
+    y = left.y + 38
+    for clue in clues[scroll:scroll + 8]:
+        chip = pygame.Rect(left.x + 12, y, left.w - 24, 32)
+        rects["clues"][clue["id"]] = chip
+        selected = game.board_clue == clue["id"]
+        pygame.draw.rect(game.screen, (58, 50, 30) if selected else (32, 34, 43), chip, border_radius=5)
+        pygame.draw.rect(game.screen, COLOR_ACCENT if selected else COLOR_BORDER, chip, width=1, border_radius=5)
+        label = get_font(11, bold=selected).render(clue["title"][:44], True, COLOR_TEXT)
+        game.screen.blit(label, (chip.x + 12, chip.y + 8))
+        linked = sum(1 for cid, _sid in map(board.parse_key, state.board_draft) if cid == clue["id"])
+        if linked:
+            badge = pygame.Rect(chip.right - 30, chip.y + 6, 20, 20)
+            pygame.draw.circle(game.screen, COLOR_ACCENT_DIM, badge.center, 10)
+            n = get_font(10, bold=True).render(str(linked), True, COLOR_TEXT)
+            game.screen.blit(n, n.get_rect(center=badge.center))
+        y += 36
+    if len(clues) > 8:
+        for key, text, x in (("up", "↑", left.right - 72), ("down", "↓", left.right - 38)):
+            r = pygame.Rect(x, left.bottom - 30, 28, 22)
+            rects[key] = r
+            pygame.draw.rect(game.screen, COLOR_PANEL_LIGHT, r, border_radius=4)
+            t = get_font(12, bold=True).render(text, True, COLOR_ACCENT)
+            game.screen.blit(t, t.get_rect(center=r.center))
+    y = right.y + 38
+    for item in case.get("suspects", []):
+        card = pygame.Rect(right.x + 12, y, right.w - 24, 76)
+        rects["suspects"][item["id"]] = card
+        active = state.board_suspect == item["id"]
+        linked = sum(1 for cid, sid in map(board.parse_key, state.board_draft) if sid == item["id"])
+        pygame.draw.rect(game.screen, (49, 43, 30) if active else (32, 34, 43), card, border_radius=6)
+        pygame.draw.rect(game.screen, COLOR_ACCENT if active else COLOR_BORDER, card, width=2 if active else 1, border_radius=6)
+        game.screen.blit(get_font(13, bold=True).render(item["name"], True, COLOR_TEXT), (card.x + 12, card.y + 9))
+        game.screen.blit(get_font(10).render(f"Связей в черновике: {linked}", True, COLOR_TEXT_DIM), (card.x + 12, card.y + 32))
+        draw_text_wrapped(game.screen, item.get("motive", ""), get_font(10), COLOR_TEXT_DIM, pygame.Rect(card.x + 12, card.y + 49, card.w - 24, 24))
+        y += 82
+    bar = pygame.Rect(rect.x + 20, rect.bottom - 112, rect.w - 40, 98)
+    draw_panel(game.screen, bar, color=(24, 26, 34))
+    message = _message(game)
+    if not message:
+        message = "Выберите улику и человека. Клик по связи снимает её. Затем выберите подозреваемого без улики и проверьте всю версию."
+    draw_text_wrapped(game.screen, message, get_font(11), COLOR_TEXT, pygame.Rect(bar.x + 14, bar.y + 8, bar.w - 28, 40))
+    buttons = [("testimony", "ПОКАЗАНИЯ", 150), ("alibi", "АЛИБИ", 130), ("review", f"ПРОВЕРИТЬ ВЕРСИЮ (+{deduction.REVIEW_COST} мин)", 280), ("proof", "К ОБВИНЕНИЮ", 180)]
+    x = bar.x + 14
+    for key, label, width in buttons:
+        r = pygame.Rect(x, bar.bottom - 38, width, 28)
+        rects[key] = r
+        pygame.draw.rect(game.screen, (54, 47, 30) if r.collidepoint(mouse) else (36, 38, 46), r, border_radius=5)
+        pygame.draw.rect(game.screen, COLOR_ACCENT_DIM, r, width=1, border_radius=5)
+        t = get_font(10, bold=True).render(label, True, COLOR_ACCENT)
+        game.screen.blit(t, t.get_rect(center=r.center))
+        x += width + 12
+    game.board_rects = rects
+
+
+def handle_expert_board_click(game, pos):
+    rects = game.board_rects or {}
+    state, case = game.state, game.current_case
+    for key, delta in (("up", -1), ("down", 1)):
+        if rects.get(key) and rects[key].collidepoint(pos):
+            game.board_scroll = max(0, getattr(game, "board_scroll", 0) + delta)
+            return True
+    for clue_id, rect in (rects.get("clues") or {}).items():
+        if rect.collidepoint(pos):
+            game.board_clue = None if game.board_clue == clue_id else clue_id
+            say(game, "")
+            return True
+    for suspect_id, rect in (rects.get("suspects") or {}).items():
+        if rect.collidepoint(pos):
+            if game.board_clue:
+                result = board.link(state, case, game.board_clue, suspect_id)
+                say(game, result["message"])
+                game.board_clue = None
+            else:
+                state.board_suspect = suspect_id
+                say(game, "Проверяется версия по выбранному подозреваемому.")
+            save_game(state)
+            return True
+    if rects.get("review") and rects["review"].collidepoint(pos):
+        if not state.board_suspect:
+            say(game, "Сначала выберите подозреваемого кликом без выбранной улики.")
+        else:
+            result = board.review(case, state, state.board_suspect)
+            say(game, board.review_text(result))
+            save_game(state)
+        return True
+    if rects.get("alibi") and rects["alibi"].collidepoint(pos):
+        game.alibi_return = "notebook"
+        game.notebook_tab = "board"
+        game.alibi_message = ""
+        game.screen_name = "alibi"
+        return True
+    if rects.get("proof") and rects["proof"].collidepoint(pos):
+        game.screen_name = "accusation"
+        return True
+    if rects.get("testimony") and rects["testimony"].collidepoint(pos):
+        from .. import testimony
+        if testimony.available(case, state):
+            game.testimony_selected = []
+            game.testimony_return = "notebook"
+            game.screen_name = "testimony"
+        else:
+            say(game, "Сначала услышьте хотя бы две реплики в допросах.")
         return True
     return False
 

@@ -270,6 +270,19 @@ def resolve(case: Optional[Dict], state) -> Dict:
                 }
             )
             break
+    from . import deduction
+    if deduction.enabled(case, state) and getattr(state, "accusation_result", None):
+        proof = deduction.proof_evaluate(case, state)
+        result["proof"] = proof
+        if result["success"] and not proof["correct"]:
+            result.update({
+                "success": False,
+                "title": "Цепочка не выдержала суда",
+                "text": "Прокурор нашёл разрывы в версии: " + "; ".join(proof["failures"]) + ". Имя подозреваемого само по себе не доказывает вину. Дело возвращено на доследование.",
+                "rank": "D",
+                "variant": "proof_failed",
+                "label": "Эксперт: версия не доказана",
+            })
     if result["success"] and getattr(state, "timeline_solved", False):
         result["rank"] = promote_rank(result.get("rank", "F"))
         result["timeline_bonus"] = True
@@ -291,6 +304,9 @@ def total_endings(case: Optional[Dict]) -> int:
     for suspect in case.get("suspects", []):
         ending = (case.get("endings") or {}).get(suspect.get("id")) or {}
         total += 1 + len(ending.get("variants") or [])
+    from . import deduction
+    if deduction.supported(case):
+        total += 1  # экспертный провал цепочки
     return total
 
 

@@ -527,5 +527,7 @@
         "note": "Коротко по карте — и очень заметно сверху."
       }
     ]
-  }
+  },
+  "order": 0,
+  "cover": "tutorial/office_desk.jpg"
 }
