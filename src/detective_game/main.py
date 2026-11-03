@@ -27,7 +27,14 @@ from .config import *
 from .cutscene import CutscenePlayer, cutscene_button_rect
 from .cutscene import draw_cutscene as draw_cutscene_screen
 from .data import case_map, get_clue, get_location, list_cases, load_case
-from .game_state import AVATARS, BACKGROUNDS, DetectiveProfile, GameState
+from .game_state import (
+    AVATARS,
+    BACKGROUNDS,
+    START_MONEY,
+    START_REPUTATION,
+    DetectiveProfile,
+    GameState,
+)
 from .save_system import (
     delete_save,
     get_save_dir,
@@ -316,6 +323,13 @@ class Game:
         # защёлка клика: кнопки баннеров создаются заново каждый кадр и без неё
         # срабатывали на каждое удержание мыши (8 окон проводника за один клик)
         self._click_latch = False
+        # модальное подтверждение опасных действий (сброс прогресса, новая игра)
+        self.confirm_dialog = None
+        self.confirm_back = "menu"
+        self.confirm_pending = None
+        self.confirm_rects = {}
+        # последний нарисованный кадр — фон для диалога подтверждения
+        self._frame_snapshot = None
         # --- Новые виджеты настроек ---
         self._init_settings_widgets()
         # notifications queue
@@ -502,6 +516,155 @@ class Game:
         self._click_latch = True
         return True
 
+    # ── подтверждение опасных действий и сброс прогресса ─────────────────
+
+    def ask_confirm(self, title: str, text: str, action, yes: str = "ДА", danger: bool = True):
+        """Спросить подтверждение перед необратимым действием.
+
+        Открывает отдельный экран ``confirm`` поверх снимка текущего кадра:
+        под ним ничего не нажимается, а «да» срабатывает только после того,
+        как игрок отпустит кнопку мыши (иначе отпускание «дожимало» бы
+        кнопку под диалогом).
+        """
+        self.confirm_dialog = {
+            "title": str(title),
+            "text": str(text),
+            "yes": str(yes),
+            "no": "ОТМЕНА",
+            "action": action,
+            "danger": bool(danger),
+        }
+        self.confirm_pending = None
+        self.confirm_back = self.screen_name if self.screen_name != "confirm" else "menu"
+        self.screen_name = "confirm"
+        self._click_latch = True
+
+    def _confirm_resolve(self, accepted: bool) -> None:
+        """Закрыть диалог: при согласии — выполнить действие."""
+        dialog = self.confirm_dialog or {}
+        self.confirm_dialog = None
+        self.confirm_pending = None
+        self.screen_name = str(self.confirm_back or "menu")
+        self._click_latch = True
+        self.audio.play_sfx("page" if accepted else "click")
+        action = dialog.get("action")
+        if accepted and callable(action):
+            action()
+
+    def _reset_progress(self) -> None:
+        """Стереть прогресс целиком: сохранение, дело, ресурсы и экраны.
+
+        Детектив (имя, портрет, прошлое) остаётся — его выбирают заново на
+        экране кастомизации, а вот улики, репутация, деньги, открытые
+        концовки и незакрытое дело исчезают.
+        """
+        detective = self.state.detective
+        delete_save()
+        self.state = GameState(detective=detective)
+        save_game(self.state)
+        # то, что живёт вне GameState и могло остаться на экране
+        self.current_case = None
+        self.location_id = "office"
+        self.search = None
+        self.search_message = ""
+        self.tail = None
+        self.tail_spec = None
+        self.cutscene = None
+        self.puzzle = None
+        self.riddle = None
+        self.riddle_clue = None
+        self.qte = None
+        self.dialogue_char = None
+        self.dialogue_idx = 0
+        self.dialogue_timer = 0.0
+        self.accusation_selected = None
+        self.testimony_selected = []
+        self.testimony_message = ""
+        self.timeline_selected = None
+        self.timeline_message = ""
+        self.board_clue = None
+        self.board_message = ""
+        self.screen_name = "menu"
+
+    def _start_new_game(self) -> None:
+        """«НОВАЯ ИГРА»: спросить и стереть прогресс (если он вообще есть)."""
+        has_progress = bool(
+            self.state.current_case_id
+            or self.state.completed_cases
+            or self.state.collected_clues
+        )
+        if not has_progress:
+            self.screen_name = "customization"
+            return
+        self.ask_confirm(
+            "НАЧАТЬ НОВУЮ ИГРУ?",
+            "Текущее дело, собранные улики, репутация, деньги и открытые "
+            "концовки будут стёрты. Детектива можно будет выбрать заново.",
+            self._new_game_confirmed,
+            yes="НАЧАТЬ ЗАНОВО",
+        )
+
+    def _new_game_confirmed(self) -> None:
+        self._reset_progress()
+        self.screen_name = "customization"
+
+    def _wipe_confirmed(self) -> None:
+        self._reset_progress()
+        self.add_notification("Прогресс сброшен — начинаем заново")
+
+    def draw_confirm(self) -> None:
+        """Экран подтверждения: диммированный прошлый кадр и два ответа."""
+        W, H = self.LOGICAL_W, self.LOGICAL_H
+        if self._frame_snapshot is not None:
+            self.screen.blit(self._frame_snapshot, (0, 0))
+        veil = pygame.Surface((W, H), pygame.SRCALPHA)
+        veil.fill((4, 6, 10, 205))
+        self.screen.blit(veil, (0, 0))
+        dialog = self.confirm_dialog or {}
+        danger = bool(dialog.get("danger", True))
+        accent = COLOR_RED if danger else COLOR_ACCENT
+        panel = pygame.Rect(0, 0, 660, 260)
+        panel.center = (W // 2, H // 2)
+        shadow = pygame.Surface((panel.w + 12, panel.h + 12), pygame.SRCALPHA)
+        pygame.draw.rect(shadow, (0, 0, 0, 120), (0, 0, panel.w + 12, panel.h + 12), border_radius=12)
+        self.screen.blit(shadow, (panel.x - 6, panel.y - 6))
+        draw_panel(self.screen, panel)
+        pygame.draw.rect(self.screen, accent, panel, width=2, border_radius=8)
+        title = get_font(18, bold=True).render(str(dialog.get("title", "ПОДТВЕРДИТЕ")), True, accent)
+        self.screen.blit(title, (panel.x + 26, panel.y + 20))
+        draw_text_wrapped(
+            self.screen,
+            str(dialog.get("text", "")),
+            get_font(13),
+            COLOR_TEXT,
+            pygame.Rect(panel.x + 26, panel.y + 56, panel.w - 52, 110),
+        )
+        yes = Button(
+            pygame.Rect(panel.x + 26, panel.bottom - 62, 290, 42),
+            str(dialog.get("yes", "ДА")),
+            style="danger" if danger else "primary",
+        )
+        no = Button(
+            pygame.Rect(panel.right - 26 - 290, panel.bottom - 62, 290, 42),
+            str(dialog.get("no", "ОТМЕНА")),
+        )
+        mouse = self._to_logical(pygame.mouse.get_pos())
+        pressed = pygame.mouse.get_pressed()[0]
+        # ответ применяем на отпускании кнопки мыши — так «да» не «дожимает»
+        # кнопку того экрана, который откроется под диалогом
+        if self.confirm_pending is not None and not pressed:
+            answer = self.confirm_pending
+            self._confirm_resolve(answer)
+            return
+        for btn, answer in ((yes, True), (no, False)):
+            btn.update(mouse, pressed)
+            btn.draw(self.screen, get_font(12, bold=True))
+            if btn.clicked and self.confirm_pending is None:
+                self.confirm_pending = answer
+        hint = get_font(9).render("Esc — отмена", True, COLOR_TEXT_DARK)
+        self.screen.blit(hint, (panel.x + 26, panel.bottom - 18))
+        self.confirm_rects = {"yes": yes.rect, "no": no.rect}
+
     def _install_update(self):
         """Ставит скачанное обновление и выходит из игры.
 
@@ -589,6 +752,11 @@ class Game:
                 pass
 
     def handle_event(self, event):
+        # диалог подтверждения перехватывает всё: под ним ничего не нажимается
+        if self.screen_name == "confirm":
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                self._confirm_resolve(False)
+            return
         # F1 — «Школа детектива» из любого экрана (кроме самого обучения)
         if event.type == pygame.KEYDOWN and event.key == pygame.K_F1 and self.screen_name != "tutorial":
             if self.screen_name in ("menu", "settings", "customization", "case_select"):
@@ -997,7 +1165,9 @@ class Game:
             self.screen.fill(COLOR_BG)
             # фон — сетка города
             self.draw_city_background()
-            if self.screen_name == "menu":
+            if self.screen_name == "confirm":
+                self.draw_confirm()
+            elif self.screen_name == "menu":
                 self.draw_menu()
             elif self.screen_name == "customization":
                 self.draw_customization()
@@ -1043,6 +1213,9 @@ class Game:
                 self.draw_update_banner()
         finally:
             self.screen = real_screen
+        if self.screen_name != "confirm":
+            # держим последний «настоящий» кадр: поверх него рисуем подтверждение
+            self._frame_snapshot = logical
         # масштабирование letterbox на физический экран
         try:
             Wp, Hp = real_screen.get_size()
@@ -1167,7 +1340,7 @@ class Game:
                     self.current_case = load_case(self.state.current_case_id)
                     self.screen_name = "map"
                 elif key == "new":
-                    self.screen_name = "customization"
+                    self._start_new_game()
                 elif key == "custom":
                     self.screen_name = "customization"
                 elif key == "settings":
@@ -1471,12 +1644,21 @@ class Game:
         btn_back.update(mouse, pressed)
         btn_back.draw(self.screen, font_btn)
 
-    def start_case(self, case_id):
+    def start_case(self, case_id, new_run: bool = False):
+        """Начать дело. ``new_run`` — прохождение «с нуля» (кнопка «СЫГРАТЬ ЕЩЁ»).
+
+        При обычном старте ресурсы детектива переносятся из прошлого дела
+        (карьера), а при переигровке того же дела — сбрасываются: иначе финал
+        сразу получал S+ за репутацию, набранную в предыдущем заходе.
+        """
         case = load_case(case_id)
         if not case:
             return
         self.current_case = case
         self.state.current_case_id = case_id
+        if new_run:
+            self.state.reputation = START_REPUTATION
+            self.state.money = START_MONEY
         self.state.visited_locations = set(["office"])
         self.state.collected_clues = set()
         self.state.interrogated = set()
@@ -3656,7 +3838,9 @@ class Game:
             self.screen_name = "menu"
         elif action == "replay":
             if self.current_case:
-                self.start_case(self.current_case["id"])
+                # переигровка того же дела — с чистым кошельком и репутацией,
+                # иначе финал получал S+ за заслуги прошлого захода
+                self.start_case(self.current_case["id"], new_run=True)
                 self.screen_name = "map"
         elif action == "next" and not self.start_next_case():
             self.screen_name = "case_select"
@@ -3837,12 +4021,14 @@ class Game:
         btn_apply.draw(self.screen, get_font(11, bold=True))
         if btn_apply.clicked and has_changes:
             self._apply_pending_settings()
-        btn_cancel = Button(layout.reset, "СБРОСИТЬ")
+        btn_cancel = Button(
+            layout.reset, "ОТМЕНИТЬ", tooltip="Вернуть настройки экрана без сохранения"
+        )
         btn_cancel.update(mouse, pressed)
         btn_cancel.draw(self.screen, get_font(11, bold=True))
         if btn_cancel.clicked:
             self._init_settings_widgets()
-            self.add_notification("Изменения сброшены")
+            self.add_notification("Изменения настроек отменены")
         # Оверлей открытых списков — поверх всего левого блока (чтобы не перекрывались контролами)
         self._draw_dropdown_overlay([self.resolution_dropdown, self.monitor_dropdown])
 
@@ -4037,11 +4223,14 @@ class Game:
         btn_wipe.update(mouse, pressed)
         btn_wipe.draw(self.screen, get_font(10, bold=True))
         if btn_wipe.clicked:
-            # Подтверждение через уведомление + таймер? Пока сразу
-            delete_save()
-            self.state = GameState(detective=self.state.detective)
-            save_game(self.state)
-            self.add_notification("Прогресс сброшен — начинаем заново")
+            # необратимо — спрашиваем ещё раз на отдельном экране
+            self.ask_confirm(
+                "СБРОСИТЬ ПРОГРЕСС?",
+                "Будут стёрты все прохождения, собранные улики, репутация, "
+                "деньги и открытые концовки. Отменить это действие нельзя.",
+                self._wipe_confirmed,
+                yes="СТЕРЕТЬ ВСЁ",
+            )
 
     def _draw_dropdown_overlay(self, dropdowns):
         # Рисует открытые списки поверх всего (вторая фаза)

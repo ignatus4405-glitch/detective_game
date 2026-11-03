@@ -48,11 +48,19 @@ def stop(game, reason: str = "", minutes: int | None = None) -> None:
     session = getattr(game, "search", None)
     if not session:
         return
-    spent = SEARCH_MINUTES if minutes is None else max(0, int(minutes))
+    had_clues = bool(getattr(session, "had_clues", True))
+    if minutes is None:
+        # осмотр без единой скрытой улики времени не стоит: иначе игрок
+        # платил 10 минут за локацию, где искать было нечего
+        spent = SEARCH_MINUTES if had_clues else 0
+    else:
+        spent = max(0, int(minutes))
     game.state.case_time_minutes += spent
     caught = bool(getattr(session, "caught", False))
     if caught:
         text = f"Патруль заметил вас — обыск прерван. Потеряно {spent} минут."
+    elif not had_clues and minutes is None:
+        text = "Здесь искать было нечего — вы осмотрелись."
     elif session.expired or reason == "time":
         text = f"Время вышло — хозяин вернулся. Попытка стоила {spent} минут."
     elif session.clue_spots_left == 0 and session.found_count:
@@ -180,16 +188,28 @@ def draw_overlay(game, visual: pygame.Rect) -> None:
     overlay.fill((8, 10, 16, 200))
     surface.blit(overlay, bar.topleft)
     pygame.draw.rect(surface, COLOR_BORDER, bar, width=1, border_radius=6)
-    label = get_font(11, bold=True).render(f"ОБЫСК  •  {title_text(session)}", True, COLOR_TEXT)
+    if getattr(session, "had_clues", True):
+        label = get_font(11, bold=True).render(f"ОБЫСК  •  {title_text(session)}", True, COLOR_TEXT)
+    else:
+        # искать нечего: это осмотр, время за него не списывается
+        label = get_font(11, bold=True).render(
+            f"ОСМОТР  •  точек: {session.total}", True, COLOR_TEXT
+        )
     surface.blit(label, (bar.x + 10, bar.y + 8))
-    if getattr(session, "patrol_on", False):
+    patrol_on = getattr(session, "patrol_on", False)
+    if patrol_on:
         patrol_left = int(round(session.patrol_seconds_left()))
         patrol = get_font(9, bold=True).render(
             f"ПАТРУЛЬ: {patrol_left}с", True, (235, 170, 120)
         )
         surface.blit(patrol, (bar.x + label.get_width() + 24, bar.y + 10))
     timer_col = COLOR_GREEN if seconds > 20 else (COLOR_ACCENT if seconds > 10 else (210, 90, 90))
-    timer = get_font(12, bold=True).render(f"{seconds // 60}:{seconds % 60:02d}", True, timer_col)
+    if getattr(session, "had_clues", True):
+        timer_text = f"{seconds // 60}:{seconds % 60:02d}"
+    else:
+        timer_text = "без спешки"
+        timer_col = COLOR_TEXT_DIM
+    timer = get_font(12, bold=True).render(timer_text, True, timer_col)
     surface.blit(timer, (bar.right - timer.get_width() - 10, bar.y + 7))
     inner = pygame.Rect(bar.x + 6, bar.bottom - 6, bar.w - 12, 3)
     pygame.draw.rect(surface, (40, 40, 50), inner)
@@ -242,6 +262,9 @@ def handle_click(game, pos) -> bool:
         return True
     taken = session.take(spot)
     if not taken:
+        # не молчим: раньше клик по живой точке просто исчезал без следа
+        game.search_message = "Здесь уже пусто."
+        game.audio.play_sfx("tick")
         return True
     if taken["kind"] == "clue":
         clue = next(
@@ -266,6 +289,19 @@ def button_rect(visual: pygame.Rect) -> pygame.Rect:
     return pygame.Rect(visual.right - 120, visual.y + 12, 110, 28)
 
 
+def has_hidden_clues(game) -> bool:
+    """Есть ли в текущей локации скрытые улики — то есть что искать вообще."""
+    case = getattr(game, "current_case", None) or {}
+    location_id = str(getattr(game, "location_id", "") or "")
+    state = getattr(game, "state", None)
+    if not case or not location_id or state is None:
+        return True
+    try:
+        return bool(search.hidden_here(case, location_id, state))
+    except Exception:
+        return True
+
+
 def draw_start_button(game, visual: pygame.Rect) -> None:
     """Кнопка запуска обыска, когда он ещё не идёт."""
     surface = game.screen
@@ -274,7 +310,9 @@ def draw_start_button(game, visual: pygame.Rect) -> None:
     hovered = rect.collidepoint(mouse)
     pygame.draw.rect(surface, (52, 46, 32) if hovered else (24, 24, 32), rect, border_radius=6)
     pygame.draw.rect(surface, COLOR_ACCENT, rect, width=1, border_radius=6)
-    label = get_font(10, bold=True).render("ОБЫСКАТЬ", True, COLOR_ACCENT)
+    # честная подпись: если искать нечего — это «осмотреться», и время не спишется
+    caption = "ОБЫСКАТЬ" if has_hidden_clues(game) else "ОСМОТРЕТЬСЯ"
+    label = get_font(10, bold=True).render(caption, True, COLOR_ACCENT)
     surface.blit(label, label.get_rect(center=rect.center))
     game.search_start_rect = rect
 
@@ -292,6 +330,7 @@ __all__ = [
     "draw_overlay",
     "draw_patrol",
     "draw_start_button",
+    "has_hidden_clues",
     "handle_click",
     "handle_start_click",
     "is_active",

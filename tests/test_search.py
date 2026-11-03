@@ -183,10 +183,21 @@ def test_flavour_texts_per_type():
     assert {spot["label"] for spot in spots} <= set(search.DEFAULT_FLAVOUR)
 
 
-def test_search_does_not_break_when_clue_list_is_empty():
+def test_search_works_in_location_without_hidden_clues():
+    """Локация без скрытых улик — не «мёртвая»: декоративные точки живые.
+
+    Раньше такая сессия считалась завершённой с первого кадра: патруль стоял,
+    таймер не шёл, а клики по точкам молча игнорировались (баг 0.1.42).
+    """
     session = search.Search({"id": "empty", "clues": []}, "nowhere", _state())
     assert session.spots
     assert session.clue_spots_left == 0
+    assert not session.had_clues
+    assert not session.finished
+    session.update(1.0)
+    assert session.remaining == session.seconds - 1
+    for spot in list(session.spots):
+        assert session.take(spot) is not None
     assert session.finished
 
 
