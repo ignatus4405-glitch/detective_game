@@ -2,11 +2,13 @@
 
 import sys
 import time
+from typing import Optional
 
 import pygame
 
 from . import board as board_logic
 from . import (
+    deduction,
     dialogue,
     expertise,
     get_version_source,
@@ -26,7 +28,7 @@ from .case_cutscenes import cutscene_for
 from .config import *
 from .cutscene import CutscenePlayer, cutscene_button_rect
 from .cutscene import draw_cutscene as draw_cutscene_screen
-from .data import case_map, get_clue, get_location, list_cases, load_case
+from .data import case_cover, case_map, get_clue, get_location, list_cases, load_case
 from .game_state import (
     AVATARS,
     BACKGROUNDS,
@@ -47,7 +49,9 @@ from .save_system import (
     save_settings,
 )
 from .ui import (
+    alibi_view,
     board_view,
+    proof_view,
     qte_view,
     search_view,
     surveillance_view,
@@ -260,6 +264,14 @@ class Game:
                 break
         # case selection
         self.case_index = 0
+        self.case_mode = getattr(self.state, "difficulty", "classic")
+        self.case_select_rects = {}
+        self.board_scroll = 0
+        self.alibi_scroll = 0
+        self.alibi_message = ""
+        self.alibi_return = "notebook"
+        self.proof_scroll = 0
+        self.proof_slot = "motive"
         # map
         self.map_selected_loc = None
         self.map_hover = None
@@ -584,6 +596,7 @@ class Game:
         self.timeline_message = ""
         self.board_clue = None
         self.board_message = ""
+        self.case_mode = "classic"
         self.screen_name = "menu"
 
     def _start_new_game(self) -> None:
@@ -782,6 +795,18 @@ class Game:
                 return
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             self.audio.play_sfx("click")
+        if self.screen_name == "alibi":
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                alibi_view.handle_click(self, self._to_logical(event.pos))
+            else:
+                alibi_view.handle_key(self, event)
+            return
+        if self.screen_name == "proof":
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                proof_view.handle_click(self, self._to_logical(event.pos))
+            else:
+                proof_view.handle_key(self, event)
+            return
         if self.screen_name == "puzzle":
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 handle_puzzle_click(self, event.pos)
@@ -826,8 +851,11 @@ class Game:
             return
         if self.screen_name == "dialogue" and self._dialogue_event(event):
             return
-        if self.screen_name == "notebook" and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.notebook_tab == "board" and board_view.handle_board_click(self, event.pos):
+        if self.screen_name == "notebook" and event.type == pygame.MOUSEBUTTONDOWN:
+            if self.notebook_tab == "board" and event.button == 1 and board_view.handle_board_click(self, event.pos):
+                return
+            if self.notebook_tab == "board" and event.button in (4, 5):
+                self.board_scroll = max(0, getattr(self, "board_scroll", 0) + (-1 if event.button == 4 else 1))
                 return
         # Глобально: дропдауны настроек — взаимоисключение и закрытие по клику в пустоту
         if self.screen_name == "settings" and hasattr(self, "resolution_dropdown"):
@@ -889,18 +917,22 @@ class Game:
                     self.selected_bg = BACKGROUNDS[bg_idx]["id"]
         elif self.screen_name == "case_select":
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                layout = self._case_select_layout()
-                if layout.btn_back.collidepoint(event.pos):
-                    pygame.time.wait(150)
+                pos = self._to_logical(event.pos)
+                rects = self.case_select_rects or {}
+                if rects.get("back") and rects["back"].collidepoint(pos):
                     self.screen_name = "menu"
                     return
-                for idx, case in enumerate(self.cases):
-                    if idx >= len(layout.cards):
-                        break
-                    if layout.cards[idx].button.collidepoint(event.pos):
-                        pygame.time.wait(150)
-                        self.start_case(case["id"])
+                for idx, rect in (rects.get("cases") or {}).items():
+                    if rect.collidepoint(pos):
+                        self.case_index = idx
                         return
+                for mode, rect in (rects.get("modes") or {}).items():
+                    if rect.collidepoint(pos) and deduction.supported(self.cases[self.case_index]):
+                        self.case_mode = mode
+                        return
+                if rects.get("start") and rects["start"].collidepoint(pos):
+                    self.start_case(self.cases[self.case_index]["id"], difficulty=self.case_mode)
+                    return
         elif self.screen_name == "map":
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.current_case:
                 layout = self._map_layout()
@@ -999,7 +1031,7 @@ class Game:
                 )
             elif self.search and self.search.expired:
                 search_view.stop(self)
-        if self.screen_name == "dialogue" and self.dialogue_char and self.dialogue_timer > 0:
+        if self.screen_name == "dialogue" and self.dialogue_char and self.dialogue_timer > 0 and not deduction.enabled(self.current_case, self.state):
             try:
                 dt = self.clock.get_time() / 1000.0
             except Exception:
@@ -1119,6 +1151,8 @@ class Game:
         "puzzle": "tension",
         "riddle": "mystery",
         "timeline": "mystery",
+        "alibi": "mystery",
+        "proof": "chase",
         "tail": "chase",
         "route": "chase",
         "qte": "chase",
@@ -1195,6 +1229,10 @@ class Game:
                 self.draw_puzzle()
             elif self.screen_name == "riddle":
                 draw_riddle(self)
+            elif self.screen_name == "alibi":
+                alibi_view.draw(self)
+            elif self.screen_name == "proof":
+                proof_view.draw(self)
             elif self.screen_name == "timeline":
                 timeline_view.draw_timeline(self)
             elif self.screen_name == "testimony":
@@ -1255,6 +1293,10 @@ class Game:
         font_title = get_font(52, bold=True)
         font_sub = get_font(18)
         font_small = get_font(14)
+        # нуарный постер под меню; панель остаётся читаемой
+        hero = cover_image("cases/last_signal.jpg", (W, H), dim=0.72)
+        if hero:
+            self.screen.blit(hero, (0, 0))
         # центр панель — всегда по центру экрана, независимо от разрешения
         panel_rect = pygame.Rect(W // 2 - 360, H // 2 - 260, 720, 520)
         draw_panel(self.screen, panel_rect)
@@ -1539,112 +1581,11 @@ class Game:
         return case_select_layout(self.LOGICAL_W, self.LOGICAL_H, len(self.cases))
 
     def draw_case_select(self):
-        W, H = self.LOGICAL_W, self.LOGICAL_H
-        layout = self._case_select_layout()
-        font_title = get_font(28, bold=True)
-        font_btn = get_font(16, bold=True)
-        draw_panel(self.screen, layout.header)
-        t = font_title.render("ВЫБЕРИ ДЕЛО, ДЕТЕКТИВ", True, COLOR_ACCENT)
-        self.screen.blit(t, t.get_rect(center=(W // 2, layout.header.centery)))
-        mouse = self._to_logical(pygame.mouse.get_pos())
-        pressed = pygame.mouse.get_pressed()[0]
-        btn_font = get_font(14, bold=True)
+        """Витрина дел: список слева, крупный постер и правила справа."""
+        from .ui.case_select_view import draw_case_select
+        draw_case_select(self)
 
-        for idx, case in enumerate(self.cases):
-            if idx >= len(layout.cards):
-                break
-            card = layout.cards[idx]
-            rect = card.rect
-            draw_panel(self.screen, rect)
-            # постер дела: карта города, если она есть у дела
-            poster = card.poster
-            poster_art = cover_image(
-                case_map(case), (poster.w, poster.h), dim=0.45, tint=None
-            ) if case_map(case) else None
-            if blit_rounded_image(self.screen, poster_art, poster, radius=8):
-                # затемнение под заголовок дела и значок «расследование»
-                band = pygame.Surface((poster.w, 44), pygame.SRCALPHA)
-                for row in range(44):
-                    alpha = int(200 * (row / 43) ** 1.5)
-                    pygame.draw.line(band, (6, 8, 14, alpha), (0, row), (poster.w, row))
-                self.screen.blit(band, (poster.x, poster.bottom - 44))
-                badge = get_font(10, bold=True).render("ДЕЛО", True, (230, 214, 160))
-                self.screen.blit(badge, (poster.x + 10, poster.bottom - 26))
-            else:
-                for i in range(poster.h):
-                    col = (30 + i // 3, 30 + i // 4, 40 + i // 5)
-                    pygame.draw.line(
-                        self.screen, col, (poster.x, poster.y + i), (poster.right, poster.y + i)
-                    )
-                # иконка-бейдж дела (эмодзи нет в бандл-шрифте — рисуем букву в кольце)
-                draw_icon(
-                    self.screen,
-                    "",
-                    poster.center,
-                    max(48, min(poster.w, poster.h) // 2),
-                    color=COLOR_ACCENT,
-                    fallback=(case["title"][:1] or "?"),
-                )
-            pygame.draw.rect(self.screen, COLOR_BORDER, poster, width=1, border_radius=8)
-            if case.get("id") in getattr(self.state, "completed_cases", set()):
-                done_txt = get_font(9, bold=True).render("✓ ПРОЙДЕНО", True, (12, 12, 12))
-                done_chip = pygame.Rect(0, 0, done_txt.get_width() + 14, 18)
-                done_chip.topright = (poster.right - 8, poster.y + 8)
-                pygame.draw.rect(self.screen, COLOR_GREEN, done_chip, border_radius=9)
-                self.screen.blit(done_txt, (done_chip.x + 7, done_chip.y + 4))
-            # заголовок и подзаголовок
-            title_surf = get_font(18, bold=True).render(case["title"], True, COLOR_TEXT)
-            self.screen.blit(title_surf, card.title_pos)
-            sub = get_font(12).render(case["subtitle"], True, COLOR_ACCENT)
-            self.screen.blit(sub, card.subtitle_pos)
-            opened, total_end = ending_logic.progress(self.state, case)
-            diff = get_font(11).render(
-                f"{case['difficulty']} • {case['duration']} • концовки {opened}/{total_end}",
-                True,
-                COLOR_TEXT_DIM,
-            )
-            self.screen.blit(diff, card.meta_pos)
-            # описание
-            draw_text_wrapped(
-                self.screen, case["description"], get_font(12), COLOR_TEXT_DIM, card.desc
-            )
-            # интро (на низких экранах может не хватить места — тогда пропускаем)
-            if card.intro.h > 0:
-                draw_panel(self.screen, card.intro, color=(20, 20, 28), border=(40, 40, 50))
-                draw_text_wrapped(
-                    self.screen,
-                    case["intro"][:220] + "...",
-                    get_font(10),
-                    COLOR_TEXT_DIM,
-                    pygame.Rect(
-                        card.intro.x + 10, card.intro.y + 8, card.intro.w - 20, card.intro.h - 16
-                    ),
-                )
-            # кнопка «ВЗЯТЬ ДЕЛО»
-            btn_rect = card.button
-            hovered = btn_rect.collidepoint(mouse)
-            col = COLOR_ACCENT_HOVER if hovered else COLOR_ACCENT
-            pygame.draw.rect(self.screen, col, btn_rect, border_radius=6)
-            pygame.draw.rect(self.screen, COLOR_BORDER, btn_rect, width=1, border_radius=6)
-            btn_text = btn_font.render("ВЗЯТЬ ДЕЛО", True, (10, 10, 10))
-            self.screen.blit(btn_text, btn_text.get_rect(center=btn_rect.center))
-            # ярлычок-тултип цены при наведении (если есть)
-            if hovered and case.get("price"):
-                tip_font = get_font(10)
-                tip = case["price"]
-                tw, th = tip_font.size(tip)
-                tx = btn_rect.centerx - tw // 2
-                ty = btn_rect.y - th - 8
-                tp_rect = pygame.Rect(tx - 8, ty - 4, tw + 16, th + 8)
-                pygame.draw.rect(self.screen, (28, 28, 36), tp_rect, border_radius=4)
-                pygame.draw.rect(self.screen, COLOR_BORDER, tp_rect, width=1, border_radius=4)
-                self.screen.blit(tip_font.render(tip, True, COLOR_TEXT_DIM), (tx, ty))
-        # назад (клик обрабатывается в handle_event — по событиям мыши)
-        btn_back = Button(layout.btn_back, "← НАЗАД", tooltip="Вернуться в меню")
-        btn_back.update(mouse, pressed)
-        btn_back.draw(self.screen, font_btn)
-
-    def start_case(self, case_id, new_run: bool = False):
+    def start_case(self, case_id, new_run: bool = False, difficulty: Optional[str] = None):
         """Начать дело. ``new_run`` — прохождение «с нуля» (кнопка «СЫГРАТЬ ЕЩЁ»).
 
         При обычном старте ресурсы детектива переносятся из прошлого дела
@@ -1656,6 +1597,22 @@ class Game:
             return
         self.current_case = case
         self.state.current_case_id = case_id
+        self.state.difficulty = deduction.normalize_mode(case, difficulty or self.case_mode)
+        self.case_mode = self.state.difficulty
+        self.state.board_draft = set()
+        self.state.board_suspect = None
+        self.state.board_review = {}
+        self.state.board_rewarded = False
+        self.state.alibi_assignments = {}
+        self.state.alibi_solved = False
+        self.state.alibi_attempts = 0
+        self.state.proof_slots = {}
+        self.state.proof_counter = None
+        self.board_scroll = 0
+        self.alibi_scroll = 0
+        self.proof_scroll = 0
+        self.proof_slot = "motive"
+        self.alibi_message = ""
         if new_run:
             self.state.reputation = START_REPUTATION
             self.state.money = START_MONEY
@@ -1740,7 +1697,7 @@ class Game:
         nxt = self.next_case()
         if not nxt or not nxt.get("id"):
             return False
-        self.start_case(nxt["id"])
+        self.start_case(nxt["id"], difficulty=self.case_mode)
         return True
 
     # ── катсцена ─────────────────────────────────────────────────────
@@ -2619,7 +2576,7 @@ class Game:
             self.add_notification(f"{ch['name']}: вы уже спрашивали об этом — доверие −1")
             save_game(self.state)
         topic = topics[self.dialogue_idx]
-        if pressure.advanced(self.current_case) and dialogue.is_interactive(topic):
+        if pressure.advanced(self.current_case) and dialogue.is_interactive(topic) and not deduction.enabled(self.current_case, self.state):
             self.dialogue_timer = pressure.DIALOGUE_SECONDS
         else:
             self.dialogue_timer = 0.0
@@ -3476,6 +3433,9 @@ class Game:
             get_font(12, bold=have >= need).render(clue_line, True, clue_col),
             (main.x + 20, main.y + 34),
         )
+        if deduction.enabled(self.current_case, self.state):
+            clue_line = f"ЭКСПЕРТ · принято судом {have} улик · цепочка ещё не проверена"
+            clue_col = COLOR_ACCENT
         if self.state.warrant:
             chip = get_font(11, bold=True).render("ОРДЕР НА РУКАХ", True, COLOR_GREEN)
             rect = pygame.Rect(main.right - chip.get_width() - 34, main.y + 32, chip.get_width() + 20, 20)
@@ -3507,8 +3467,13 @@ class Game:
             self.screen.blit(motive, (r.x + 20, r.y + 36))
             # доказательства: сколько улик по этому подозреваемому уже на руках
             evidence = list(sus.get("evidence") or [])
+            if deduction.enabled(self.current_case, self.state):
+                evidence = []
             found = sum(1 for clue_id in evidence if clue_id in self.state.collected_clues)
-            if evidence:
+            if deduction.enabled(self.current_case, self.state):
+                ev_text = "цепочка доказывается на доске версий"
+                ev_col = COLOR_ACCENT_DIM
+            elif evidence:
                 ev_text = f"доказательства: {found}/{len(evidence)}"
                 ev_col = (60, 90, 60) if found >= len(evidence) else (90, 70, 40)
             else:
@@ -3520,7 +3485,7 @@ class Game:
                 get_font(10, bold=True).render(ev_text.upper(), True, ev_col),
                 (r.x + 20, r.y + 58),
             )
-            if board_logic.conclusion_for(self.current_case, self.state, sus):
+            if not deduction.enabled(self.current_case, self.state) and board_logic.conclusion_for(self.current_case, self.state, sus):
                 tag = get_font(9, bold=True).render("ВЕРСИЯ СОБРАНА", True, COLOR_GREEN)
                 self.screen.blit(tag, (r.right - tag.get_width() - 60, r.bottom - 18))
             # кликабельность — один выбор на нажатие
@@ -3529,6 +3494,9 @@ class Game:
                     # ответы суда относятся к конкретному подозреваемому
                     self.state.trial_motive = None
                     self.state.trial_method = None
+                    if deduction.enabled(self.current_case, self.state):
+                        self.state.proof_slots = {}
+                        self.state.proof_counter = None
                 self.accusation_selected = sus["id"]
             # галочка
             if selected:
@@ -3592,7 +3560,7 @@ class Game:
         )
         btn_confirm = Button(
             (main.right - 200, main.bottom - 50, 180, 40),
-            "ОБВИНИТЬ!",
+            "СОБРАТЬ ЦЕПОЧКУ" if deduction.enabled(self.current_case, self.state) else "ОБВИНИТЬ!",
             accent=True,
             enabled=can_confirm,
         )
@@ -3631,6 +3599,10 @@ class Game:
                     if not trial.ready(self.current_case, self.state):
                         self.add_notification("Суд ждёт мотив и способ — выберите их под карточками")
                         self.audio.play_sfx("tick")
+                    elif deduction.enabled(self.current_case, self.state):
+                        self.state.accusation_result = self.accusation_selected
+                        self.proof_slot = "motive"
+                        self.screen_name = "proof"
                     else:
                         self._finish_case()
                 elif act == "timeline":

@@ -74,6 +74,8 @@ def link(state, case: Optional[Dict], clue_id: str, suspect_id: str) -> Dict:
     ``missing`` (нет улики/подозреваемого) и ``conclusion`` — вывод, если
     после этой связки у подозреваемого сошлось всё.
     """
+    from . import deduction
+
     clue_id, suspect_id = str(clue_id), str(suspect_id)
     item = suspect(case, suspect_id)
     if not item or not clue_exists(case, clue_id):
@@ -81,6 +83,21 @@ def link(state, case: Optional[Dict], clue_id: str, suspect_id: str) -> Dict:
     if clue_id not in getattr(state, "collected_clues", set()):
         return {"status": "missing", "message": "Сначала найдите эту улику."}
     key = link_key(clue_id, suspect_id)
+    if deduction.enabled(case, state):
+        draft = set(getattr(state, "board_draft", set()))
+        existed = key in draft
+        if existed:
+            draft.discard(key)
+        else:
+            draft.add(key)
+        state.board_draft = draft
+        state.board_suspect = suspect_id
+        state.board_review = {}
+        return {
+            "status": "draft_removed" if existed else "draft",
+            "message": "Связь убрана из черновика." if existed else "Гипотеза записана. Истинность пока не проверяется.",
+            "time": 0,
+        }
     correct_links = getattr(state, "board_links", set())
     wrong_links = getattr(state, "board_wrong", set())
     if key in correct_links:
@@ -120,6 +137,9 @@ def clue_title(case: Optional[Dict], clue_id: str) -> str:
 
 
 def all_evidence_linked(case: Optional[Dict], state, item: Dict) -> bool:
+    from . import deduction
+    if deduction.enabled(case, state):
+        return False
     links = getattr(state, "board_links", set())
     evidence_ids = {str(cid) for cid in item.get("evidence", []) if clue_exists(case, str(cid))}
     if not evidence_ids:
@@ -157,8 +177,55 @@ def conclusions(case: Optional[Dict], state) -> List[Dict]:
     return result
 
 
+def review(case: Optional[Dict], state, suspect_id: str) -> Dict:
+    """Проверить всю версию: ни одна отдельная связь не получает оценку."""
+    from . import deduction
+
+    if not deduction.enabled(case, state):
+        return {"status": "disabled"}
+    expected = (case.get("proof") or {}).get("board", {}).get(suspect_id, [])
+    links = {cid for cid, sid in map(parse_key, state.board_draft) if sid == suspect_id}
+    signature = "|".join(sorted(links))
+    cached = state.board_review or {}
+    if cached.get("signature") == signature and cached.get("suspect") == suspect_id:
+        return {**cached, "status": "cached"}
+    missing = []
+    for slot, _n, label, _q in deduction.SLOTS:
+        accepted = (case.get("proof") or {}).get("slots", {}).get(slot, [])
+        if not links.intersection(accepted):
+            missing.append(label.lower())
+    extra = len(links - set(expected))
+    complete = not missing and not extra and bool(expected)
+    result = {
+        "status": "ok", "signature": signature, "suspect": suspect_id,
+        "complete": complete, "missing": missing, "extra": extra,
+    }
+    state.board_review = dict(result)
+    state.case_time_minutes += deduction.REVIEW_COST
+    if complete and not state.board_rewarded:
+        state.board_rewarded = True
+        state.reputation += 2
+    return result
+
+
+def review_text(result: Dict) -> str:
+    if result.get("complete"):
+        return "Версия выдержала проверку. Перенесите доказательства в обвинение."
+    parts = []
+    if result.get("missing"):
+        parts.append("Не обоснованы: " + ", ".join(result["missing"]))
+    if result.get("extra"):
+        parts.append(f"Лишних связок: {result['extra']}")
+    return ". ".join(parts) + ". Игра не отмечает отдельные связи."
+
+
 def progress(case: Optional[Dict], state) -> Dict:
     """Счёт для шапки доски и подсказок."""
+    from . import deduction
+    if deduction.enabled(case, state):
+        return {"correct": 0, "wrong": 0, "total": 0, "suspects_done": 0,
+                "suspects_total": len(suspects(case)), "percent": 0,
+                "draft": len(state.board_draft)}
     total = total_links(case)
     links = getattr(state, "board_links", set())
     correct = sum(1 for key in links if _key_valid(case, key))

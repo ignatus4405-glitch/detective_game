@@ -136,6 +136,17 @@ class GameState:
     tail_blocked_until_day: int = 0
     # персонажи, замолчавшие до определённого дня: char_id -> день
     silenced: dict = field(default_factory=dict)
+    # Экспертное расследование. Старые сохранения получают classic.
+    difficulty: str = "classic"
+    board_draft: set = field(default_factory=set)
+    board_suspect: Optional[str] = None
+    board_review: dict = field(default_factory=dict)
+    board_rewarded: bool = False
+    alibi_assignments: dict = field(default_factory=dict)
+    alibi_solved: bool = False
+    alibi_attempts: int = 0
+    proof_slots: dict = field(default_factory=dict)
+    proof_counter: Optional[str] = None
     # meta
     total_playtime: float = 0.0
 
@@ -162,6 +173,10 @@ class GameState:
         d["riddle_tip_shown"] = bool(self.riddle_tip_shown)
         d["tail_failed"] = list(self.tail_failed)
         d["silenced"] = dict(self.silenced)
+        d["board_draft"] = list(self.board_draft)
+        d["board_review"] = dict(self.board_review)
+        d["alibi_assignments"] = dict(self.alibi_assignments)
+        d["proof_slots"] = dict(self.proof_slots)
         # dataclass nested
         return d
 
@@ -214,6 +229,16 @@ class GameState:
             tail_failed=set(data.get("tail_failed", []) or []),
             tail_blocked_until_day=int(data.get("tail_blocked_until_day", 0) or 0),
             silenced={str(k): int(v) for k, v in (data.get("silenced", {}) or {}).items()},
+            difficulty=str(data.get("difficulty", "classic")),
+            board_draft=set(data.get("board_draft", []) or []),
+            board_suspect=data.get("board_suspect"),
+            board_review=dict(data.get("board_review", {}) or {}),
+            board_rewarded=bool(data.get("board_rewarded", False)),
+            alibi_assignments=dict(data.get("alibi_assignments", {}) or {}),
+            alibi_solved=bool(data.get("alibi_solved", False)),
+            alibi_attempts=int(data.get("alibi_attempts", 0) or 0),
+            proof_slots=dict(data.get("proof_slots", {}) or {}),
+            proof_counter=data.get("proof_counter"),
             total_playtime=data.get("total_playtime", 0.0),
         )
         return obj

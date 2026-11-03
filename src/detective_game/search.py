@@ -222,9 +222,9 @@ class Search:
         self.found: List[Dict] = []
         self.expired = False
         self._state = state
-        from . import pressure
-
-        self.patrol_on = pressure.advanced(self.case)
+        from . import deduction, pressure
+        self.relaxed = deduction.enabled(self.case, state)
+        self.patrol_on = pressure.advanced(self.case) and not self.relaxed
         self.patrol_route = self._route()
         self.route_index = 0
         self.step_elapsed = 0.0
@@ -348,6 +348,8 @@ class Search:
 
     def update(self, dt: float) -> None:
         if self.finished:
+            return
+        if getattr(self, "relaxed", False):
             return
         step = max(0.0, float(dt or 0.0))
         self.elapsed += step
