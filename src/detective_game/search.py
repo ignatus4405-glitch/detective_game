@@ -216,6 +216,9 @@ class Search:
         self.seconds = max(10, int(seconds or DEFAULT_SECONDS))
         self.remaining = float(self.seconds)
         self.spots = build(self.case, self.location_id, state)
+        # сколько здесь было настоящих (скрытых) улик на момент старта —
+        # от этого зависит, брать ли игровое время за попытку
+        self.clue_count = sum(1 for spot in self.spots if spot["kind"] == "clue")
         self.found: List[Dict] = []
         self.expired = False
         self._state = state
@@ -323,8 +326,25 @@ class Search:
         return sum(1 for spot in self.spots if spot["kind"] == "clue")
 
     @property
+    def had_clues(self) -> bool:
+        """Были ли в локации скрытые улики (тогда обыск стоит времени)."""
+        return self.clue_count > 0
+
+    @property
     def finished(self) -> bool:
-        return self.expired or self.clue_spots_left == 0 or not self.spots
+        """Обыск закончен: время вышло, кликать нечего или все улики найдены.
+
+        Раньше здесь стояло просто ``clue_spots_left == 0``. Из-за этого в
+        локациях без скрытых улик (в «Тени ячейки №314» таких семь из девяти)
+        сессия считалась завершённой с первого кадра: ``update()`` выходил
+        сразу, патруль замирал, таймер стоял на месте, а клики по точкам
+        молча игнорировались. Теперь «закончено» — это когда искать больше
+        нечего: декоративные точки в таких локациях живые, а патруль ходит.
+        """
+        if self.expired or not self.spots:
+            return True
+        # были настоящие улики — обыск закрывается сам, как только они найдены
+        return self.clue_count > 0 and self.clue_spots_left == 0
 
     def update(self, dt: float) -> None:
         if self.finished:

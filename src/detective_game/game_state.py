@@ -62,6 +62,11 @@ BACKGROUNDS = [
     {"id": "reporter", "label": "Репортёр", "icon": "📰"},
 ]
 
+# стартовые ресурсы детектива: с них начинается новое дело «с нуля»
+START_REPUTATION = 0
+START_MONEY = 500
+
+
 @dataclass
 class GameState:
     # detective
@@ -100,8 +105,8 @@ class GameState:
     # разоблачённая ложь: "персонаж:тема" -> ответ персонажа
     exposed_lies: dict = field(default_factory=dict)
     # ресурсы детектива
-    reputation: int = 0
-    money: int = 500
+    reputation: int = START_REPUTATION
+    money: int = START_MONEY
     # ордер на обыск/задержание: куплен или выбит блефом
     warrant: bool = False
     # редкое QTE «драка в баре» уже случилось в этом деле
@@ -192,7 +197,7 @@ class GameState:
             tail_done=set(data.get("tail_done", []) or []),
             exposed_lies=dict(data.get("exposed_lies", {}) or {}),
             reputation=int(data.get("reputation", 0) or 0),
-            money=int(data.get("money", 500) or 0),
+            money=int(data.get("money", START_MONEY) or 0),
             warrant=bool(data.get("warrant", False)),
             fight_done=bool(data.get("fight_done", False)),
             asked_topics=set(data.get("asked_topics", []) or []),
