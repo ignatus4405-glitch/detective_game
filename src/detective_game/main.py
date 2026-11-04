@@ -974,7 +974,15 @@ class Game:
                     return
                 if event.button == 1:
                     # левый клик — перейти в локацию по пину
-                    pin_id = self._map_pin_at(layout, event.pos, offset, zoom)
+                    view_w = layout.map_rect.w / zoom
+                    view_h = layout.map_rect.h / zoom
+                    view_rect = pygame.Rect(
+                        offset.x / zoom + (layout.map_rect.w - view_w) / 2,
+                        offset.y / zoom + (layout.map_rect.h - view_h) / 2,
+                        view_w,
+                        view_h,
+                    )
+                    pin_id = self._map_pin_at(layout, event.pos, view_rect, zoom)
                     if pin_id and pin_id in self.get_available_locations():
                         location = get_location(self.current_case, pin_id)
                         if not worldtime.is_open_now(location, self.state.case_time_minutes):
@@ -2115,20 +2123,21 @@ class Game:
             self.screen.blit(label, (pos[0] + 6, pos[1] + 2))
         pygame.draw.rect(self.screen, COLOR_BORDER, rect, width=1, border_radius=8)
 
-    def _map_pin_screen_pos(self, layout, pin_center, offset, zoom):
+    def _map_pin_screen_pos(self, layout, pin_center, view_rect, zoom):
         """Экранная позиция пина с учётом панорамы и зума.
         
         pin_center — базовая позиция из layout.pins (при зум=1, без панорамы).
-        offset — смещение панорамы в пикселях.
+        view_rect — какая часть мира видна (мировые координаты, относительно map_rect.topleft).
         zoom — коэффициент зума.
         """
         base = pygame.Vector2(pin_center)
+        rect = layout.map_rect
         return pygame.Vector2(
-            layout.map_rect.centerx + (base.x - layout.map_rect.centerx - offset.x) * zoom,
-            layout.map_rect.centery + (base.y - layout.map_rect.centery - offset.y) * zoom,
+            rect.x + (base.x - rect.x - view_rect.x) * zoom,
+            rect.y + (base.y - rect.y - view_rect.y) * zoom,
         )
 
-    def _map_pin_at(self, layout, screen_pos, offset, zoom):
+    def _map_pin_at(self, layout, screen_pos, view_rect, zoom):
         """Вернуть id локации под экранной позицией, или None."""
         avail = self.get_available_locations()
         hit_r = int(18 * zoom)
@@ -2136,7 +2145,7 @@ class Game:
         for loc, pin_rect in zip(self.current_case["locations"], layout.pins, strict=False):
             if loc["id"] not in avail:
                 continue
-            pin_pos = self._map_pin_screen_pos(layout, pin_rect.center, offset, zoom)
+            pin_pos = self._map_pin_screen_pos(layout, pin_rect.center, view_rect, zoom)
             if pin_pos.distance_to(mouse_vec) < hit_r:
                 return loc["id"]
         return None
@@ -2226,7 +2235,7 @@ class Game:
         for loc, pin_rect in zip(self.current_case["locations"], layout.pins, strict=False):
             if loc["id"] not in avail:
                 continue
-            screen_pos = self._map_pin_screen_pos(layout, pin_rect.center, offset, zoom)
+            screen_pos = self._map_pin_screen_pos(layout, pin_rect.center, view_rect, zoom)
             # не рисуем пины за пределами viewport (с запасом)
             if (
                 screen_pos.x < layout.map_rect.left - pin_r
