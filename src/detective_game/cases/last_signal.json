@@ -234,6 +234,7 @@
         80,
         80
       ],
+      "portrait": "portraits/vera.png",
       "dialogue": [
         {
           "prompt": "Где вы были в 22:17?",
@@ -280,6 +281,7 @@
         90,
         120
       ],
+      "portrait": "portraits/owen.png",
       "dialogue": [
         {
           "q": "Где вы были в 22:17?",
@@ -326,6 +328,7 @@
         110,
         80
       ],
+      "portrait": "portraits/jules.png",
       "dialogue": [
         {
           "q": "Где вы были в 22:17?",
@@ -369,6 +372,7 @@
         90,
         120
       ],
+      "portrait": "portraits/grey.png",
       "dialogue": [
         {
           "q": "Что с кассетой?",

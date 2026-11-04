@@ -248,6 +248,7 @@
         80,
         80
       ],
+      "portrait": "portraits/miriam.png",
       "dialogue": [
         {
           "prompt": "Где вы были в 20:26?",
@@ -294,6 +295,7 @@
         90,
         120
       ],
+      "portrait": "portraits/theo.png",
       "dialogue": [
         {
           "q": "Где вы были в 20:26?",
@@ -341,6 +343,7 @@
         110,
         80
       ],
+      "portrait": "portraits/lena.png",
       "dialogue": [
         {
           "q": "Где вы были в 20:26?",
@@ -383,6 +386,7 @@
         90,
         60
       ],
+      "portrait": "portraits/notary.png",
       "dialogue": [
         {
           "q": "Что со страницей 47?",
@@ -409,6 +413,7 @@
         90,
         120
       ],
+      "portrait": "portraits/grey.png",
       "dialogue": [
         {
           "q": "Что говорит пожарный протокол?",
