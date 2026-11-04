@@ -60,8 +60,7 @@ from .ui import (
 )
 from .ui.artwork import blit_rounded as blit_rounded_image
 from .ui.artwork import clear_cache as clear_artwork_cache
-from .ui.artwork import cover_image
-from .ui.artwork import resolve
+from .ui.artwork import cover_image, resolve
 from .ui.layout import (
     case_select_layout,
     customization_layout,
