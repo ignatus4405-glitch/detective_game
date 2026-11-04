@@ -2063,10 +2063,16 @@ class Game:
         """
         draw_panel(self.screen, rect)
         map_img = _load_map_image(case_map(self.current_case))
+        # Пины раскладываются map_layout по ширине rect и по высоте игровой
+        # области (без нижней строки-подсказки). Фон должен использовать ту же
+        # базовую геометрию, а не собственный размер файла (1280×720), иначе
+        # при любом разрешении landmarks и пины расходятся.
+        hint_h = max(16, int(self.LOGICAL_H * 0.024))
+        map_world_w = rect.w
+        map_world_h = max(1, rect.h - hint_h - 10)
         if map_img is not None:
-            # Масштабируем изображение под зум
-            scaled_w = max(1, int(map_img.get_width() * zoom))
-            scaled_h = max(1, int(map_img.get_height() * zoom))
+            scaled_w = max(1, int(map_world_w * zoom))
+            scaled_h = max(1, int(map_world_h * zoom))
             scaled_img = pygame.transform.smoothscale(map_img, (scaled_w, scaled_h))
             # Верхний левый угол мира (view_rect.topleft) должен совпадать с
             # верхним левым углом rect, масштабированным на zoom.
@@ -2092,8 +2098,8 @@ class Game:
 
         # районы города: подписи на плашках (трансформируем под зум)
         font_dist = get_font(10, bold=True)
-        img_w = map_img.get_width() if map_img else float(rect.w)
-        img_h = map_img.get_height() if map_img else float(rect.h)
+        img_w = map_world_w
+        img_h = map_world_h
         for name, nx, ny in (
             ("ХОЛМЫ", 0.03, 0.04),
             ("СЕВЕР", 0.55, 0.04),
