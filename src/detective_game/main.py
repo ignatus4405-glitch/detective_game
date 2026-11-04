@@ -1017,7 +1017,7 @@ class Game:
                 factor = 1.1 if event.y > 0 else (1 / 1.1 if event.y < 0 else 1.0)
                 new_zoom = max(0.5, min(3.0, old_zoom * factor))
                 if new_zoom != old_zoom:
-                    mx, my = event.pos
+                    mx, my = self._to_logical(pygame.mouse.get_pos())
                     center = pygame.Vector2(self.LOGICAL_W / 2, self.LOGICAL_H / 2)
                     # точка под курсором должна оставаться на месте
                     self.map_offset = pygame.Vector2(
@@ -2154,8 +2154,8 @@ class Game:
         view_w = layout.map_rect.w / zoom
         view_h = layout.map_rect.h / zoom
         view_rect = pygame.Rect(
-            layout.map_rect.centerx - view_w / 2 - offset.x,
-            layout.map_rect.centery - view_h / 2 - offset.y,
+            offset.x / zoom + (layout.map_rect.w - view_w) / 2,
+            offset.y / zoom + (layout.map_rect.h - view_h) / 2,
             view_w,
             view_h,
         )
