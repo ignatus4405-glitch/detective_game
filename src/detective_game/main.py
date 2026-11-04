@@ -128,6 +128,27 @@ except Exception:
 pygame.init()
 
 
+# Кэш изображений карт (загружаются один раз, используются для зума/панорамы)
+_MAP_IMAGE_CACHE: dict = {}
+
+
+def _load_map_image(relpath: str) -> pygame.Surface:
+    """Загружает изображение карты с кэшированием."""
+    if relpath not in _MAP_IMAGE_CACHE:
+        try:
+            path = resolve(relpath)
+            img = pygame.image.load(str(path)).convert()
+            _MAP_IMAGE_CACHE[relpath] = img
+        except Exception:
+            _MAP_IMAGE_CACHE[relpath] = None
+    return _MAP_IMAGE_CACHE[relpath]
+
+
+def clear_map_cache() -> None:
+    """Сбрасывает кэш изображений карт (после смены дисплея)."""
+    _MAP_IMAGE_CACHE.clear()
+
+
 # Создаём базовые ассеты если нет
 def ensure_placeholder_images():
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -192,6 +213,7 @@ class Game:
         # недействительны — иначе отрисовка может упасть в segfault.
         reset_font_caches()
         clear_artwork_cache()
+        clear_map_cache()
         pygame.display.set_caption(TITLE)
         self.clock = pygame.time.Clock()
         self.running = True
@@ -277,6 +299,12 @@ class Game:
         self.map_hover = None
         # location
         self.location_id = "office"
+        # карта: панорама и зум (смещение от центра в пикселях + коэффициент зума)
+        self.map_offset = pygame.Vector2(0, 0)
+        self.map_zoom = 1.0
+        self.map_dragging = False
+        self.map_drag_start_screen = None
+        self.map_drag_start_offset = None
         self.dialogue_char = None
         self.dialogue_idx = 0
         # таймер реплики и отметка «уже штрафовали за повтор в этом разговоре»
@@ -934,30 +962,69 @@ class Game:
                     self.start_case(self.cases[self.case_index]["id"], difficulty=self.case_mode)
                     return
         elif self.screen_name == "map":
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.current_case:
+            if event.type == pygame.MOUSEBUTTONDOWN and self.current_case:
                 layout = self._map_layout()
+                zoom = max(0.5, min(3.0, self.map_zoom))
+                offset = self.map_offset
                 # повтор катсцены — та же кнопка, что рисуется в журнале
                 if self._cutscene_replay_rect(layout).collidepoint(event.pos):
                     if cutscene_for(str(self.current_case.get("id", ""))):
                         pygame.time.wait(120)
                         self.play_cutscene()
                     return
-                loc_id = layout.pin_at(event.pos)
-                # Пины ловятся в тех же точках, где нарисованы (раньше клик
-                # проверялся по сырым координатам дела и уходил мимо).
-                if loc_id and loc_id in self.get_available_locations():
-                    location = get_location(self.current_case, loc_id)
-                    if not worldtime.is_open_now(location, self.state.case_time_minutes):
+                if event.button == 1:
+                    # левый клик — перейти в локацию по пину
+                    pin_id = self._map_pin_at(layout, event.pos, offset, zoom)
+                    if pin_id and pin_id in self.get_available_locations():
+                        location = get_location(self.current_case, pin_id)
+                        if not worldtime.is_open_now(location, self.state.case_time_minutes):
+                            pygame.time.wait(120)
+                            self.add_notification(worldtime.closed_reason(location, self.state.case_time_minutes))
+                            self.audio.play_sfx("fail")
+                            return
                         pygame.time.wait(120)
-                        self.add_notification(worldtime.closed_reason(location, self.state.case_time_minutes))
-                        self.audio.play_sfx("fail")
-                        return
-                    pygame.time.wait(120)
-                    self.location_id = loc_id
-                    self.screen_name = "location"
-                    self.state.visited_locations.add(loc_id)
-                    save_game(self.state)
-                    self._maybe_riddle_tip(loc_id)
+                        self.location_id = pin_id
+                        self.screen_name = "location"
+                        self.state.visited_locations.add(pin_id)
+                        save_game(self.state)
+                        self._maybe_riddle_tip(pin_id)
+                elif event.button == 2:
+                    # средняя кнопка — сброс вида
+                    self.map_offset = pygame.Vector2(0, 0)
+                    self.map_zoom = 1.0
+                elif event.button == 3:
+                    # правая кнопка — начало перетаскивания карты
+                    self.map_dragging = True
+                    self.map_drag_start_screen = pygame.Vector2(event.pos)
+                    self.map_drag_start_offset = pygame.Vector2(self.map_offset)
+            elif event.type == pygame.MOUSEBUTTONUP and self.current_case:
+                if event.button == 3:
+                    self.map_dragging = False
+            elif event.type == pygame.MOUSEMOTION and self.current_case:
+                if self.map_dragging and self.map_drag_start_screen is not None:
+                    zoom = max(0.5, min(3.0, self.map_zoom))
+                    dx = event.pos[0] - self.map_drag_start_screen.x
+                    dy = event.pos[1] - self.map_drag_start_screen.y
+                    # перемещаем вид за направлением перетаскивания
+                    self.map_offset = pygame.Vector2(
+                        self.map_drag_start_offset.x - dx / zoom,
+                        self.map_drag_start_offset.y - dy / zoom,
+                    )
+            elif event.type == pygame.MOUSEWHEEL and self.current_case:
+                # колёсико мыши — зум вокруг курсора
+                layout = self._map_layout()
+                old_zoom = self.map_zoom
+                factor = 1.1 if event.y > 0 else (1 / 1.1 if event.y < 0 else 1.0)
+                new_zoom = max(0.5, min(3.0, old_zoom * factor))
+                if new_zoom != old_zoom:
+                    mx, my = event.pos
+                    center = pygame.Vector2(self.LOGICAL_W / 2, self.LOGICAL_H / 2)
+                    # точка под курсором должна оставаться на месте
+                    self.map_offset = pygame.Vector2(
+                        self.map_offset.x + (mx - center.x) * (1.0 / old_zoom - 1.0 / new_zoom),
+                        self.map_offset.y + (my - center.y) * (1.0 / old_zoom - 1.0 / new_zoom),
+                    )
+                    self.map_zoom = new_zoom
         elif self.screen_name == "location":
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 if self.search:
@@ -1672,6 +1739,10 @@ class Game:
         self.ending_rects = {}
         save_game(self.state)
         self.location_id = "office"
+        # Сброс вида карты
+        self.map_offset = pygame.Vector2(0, 0)
+        self.map_zoom = 1.0
+        self.map_dragging = False
         self.add_notification(f"Дело «{case['title']}» начато. Удачи, {self.state.detective.name}!")
         self.play_cutscene(case_id)
 
@@ -1975,31 +2046,46 @@ class Game:
             world=(WINDOW_WIDTH, WINDOW_HEIGHT),
         )
 
-    def _draw_case_map(self, rect: pygame.Rect) -> None:
-        """Фон карты дела: картинка города + подписи районов + вуаль под пины."""
+    def _draw_case_map(self, rect: pygame.Rect, view_rect: pygame.Rect, zoom: float) -> None:
+        """Фон карты дела с панорамой и зумом.
+
+        rect — область просмотра на экране (логические координаты).
+        view_rect — какая часть мира видна прямо сейчас (мировые координаты).
+        zoom — коэффициент зума.
+        """
         draw_panel(self.screen, rect)
-        art = cover_image(case_map(self.current_case), (rect.w, rect.h), dim=0.5)
-        if blit_rounded_image(self.screen, art, rect, radius=8):
+        map_img = _load_map_image(case_map(self.current_case))
+        if map_img is not None:
+            # Масштабируем изображение под зум
+            scaled_w = max(1, int(map_img.get_width() * zoom))
+            scaled_h = max(1, int(map_img.get_height() * zoom))
+            scaled_img = pygame.transform.smoothscale(map_img, (scaled_w, scaled_h))
+            # Верхний левый угол мира (view_rect.topleft) должен совпадать с
+            # верхним левым углом rect, масштабированным на zoom.
+            blit_x = rect.x - view_rect.x * zoom
+            blit_y = rect.y - view_rect.y * zoom
+            old_clip = self.screen.get_clip()
+            self.screen.set_clip(rect)
+            self.screen.blit(scaled_img, (blit_x, blit_y))
+            self.screen.set_clip(old_clip)
+            # вуаль
             veil = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
-            veil.fill((8, 10, 18, 80))
+            veil.fill((8, 10, 18, 70))
             self.screen.blit(veil, rect.topleft)
-            # нижняя «шторка»: подсказка внизу карты должна читаться
-            band_h = max(48, int(rect.h * 0.1))
-            band = pygame.Surface((rect.w, band_h), pygame.SRCALPHA)
-            for row in range(band_h):
-                alpha = int(225 * (row / max(1, band_h - 1)) ** 1.5)
-                pygame.draw.line(band, (8, 10, 18, alpha), (0, row), (rect.w, row))
-            self.screen.blit(band, (rect.x, rect.bottom - band_h))
         else:
-            # запасной вариант, если картинки нет: прежняя тёмная сетка
+            # запасной вариант: тёмная сетка
             pygame.draw.rect(self.screen, (18, 18, 26), rect, border_radius=8)
-            for x in range(rect.x, rect.right, 80):
+            gx = int((-view_rect.x * zoom) % 80)
+            gy = int((-view_rect.y * zoom) % 80)
+            for x in range(rect.x + gx, rect.right, 80):
                 pygame.draw.line(self.screen, (40, 40, 50), (x, rect.y), (x, rect.bottom), 1)
-            for y in range(rect.y, rect.bottom, 80):
+            for y in range(rect.y + gy, rect.bottom, 80):
                 pygame.draw.line(self.screen, (40, 40, 50), (rect.x, y), (rect.right, y), 1)
 
-        # районы города: подпись на плашке, чтобы читалась на любой карте
+        # районы города: подписи на плашках (трансформируем под зум)
         font_dist = get_font(10, bold=True)
+        img_w = map_img.get_width() if map_img else float(rect.w)
+        img_h = map_img.get_height() if map_img else float(rect.h)
         for name, nx, ny in (
             ("ХОЛМЫ", 0.03, 0.04),
             ("СЕВЕР", 0.55, 0.04),
@@ -2007,13 +2093,53 @@ class Game:
             ("ЦЕНТР", 0.46, 0.30),
             ("ПОРТ", 0.72, 0.62),
         ):
+            world_pos = pygame.Vector2(nx * img_w, ny * img_h)
+            screen_pos = pygame.Vector2(
+                rect.x + (world_pos.x - view_rect.x) * zoom,
+                rect.y + (world_pos.y - view_rect.y) * zoom,
+            )
             label = font_dist.render(name, True, (214, 206, 186))
-            badge = pygame.Surface((label.get_width() + 12, label.get_height() + 4), pygame.SRCALPHA)
+            label_w = label.get_width()
+            label_h = label.get_height()
+            if (
+                screen_pos.x + label_w < rect.x
+                or screen_pos.x > rect.right
+                or screen_pos.y + label_h < rect.y
+                or screen_pos.y > rect.bottom
+            ):
+                continue
+            badge = pygame.Surface((label_w + 12, label_h + 4), pygame.SRCALPHA)
             pygame.draw.rect(badge, (10, 12, 20, 165), badge.get_rect(), border_radius=3)
-            pos = (rect.x + int(nx * rect.w), rect.y + int(ny * rect.h))
+            pos = (int(screen_pos.x), int(screen_pos.y))
             self.screen.blit(badge, pos)
             self.screen.blit(label, (pos[0] + 6, pos[1] + 2))
         pygame.draw.rect(self.screen, COLOR_BORDER, rect, width=1, border_radius=8)
+
+    def _map_pin_screen_pos(self, layout, pin_center, offset, zoom):
+        """Экранная позиция пина с учётом панорамы и зума.
+        
+        pin_center — базовая позиция из layout.pins (при зум=1, без панорамы).
+        offset — смещение панорамы в пикселях.
+        zoom — коэффициент зума.
+        """
+        base = pygame.Vector2(pin_center)
+        return pygame.Vector2(
+            layout.map_rect.centerx + (base.x - layout.map_rect.centerx - offset.x) * zoom,
+            layout.map_rect.centery + (base.y - layout.map_rect.centery - offset.y) * zoom,
+        )
+
+    def _map_pin_at(self, layout, screen_pos, offset, zoom):
+        """Вернуть id локации под экранной позицией, или None."""
+        avail = self.get_available_locations()
+        hit_r = int(18 * zoom)
+        mouse_vec = pygame.Vector2(screen_pos)
+        for loc, pin_rect in zip(self.current_case["locations"], layout.pins, strict=False):
+            if loc["id"] not in avail:
+                continue
+            pin_pos = self._map_pin_screen_pos(layout, pin_rect.center, offset, zoom)
+            if pin_pos.distance_to(mouse_vec) < hit_r:
+                return loc["id"]
+        return None
 
     def draw_map(self):
         if not self.current_case:
@@ -2022,9 +2148,20 @@ class Game:
         font_title = get_font(20, bold=True)
         font_small = get_font(13)
 
+        # --- Вид карты: смещение + зум ---
+        zoom = max(0.5, min(3.0, self.map_zoom))
+        offset = self.map_offset
+        view_w = layout.map_rect.w / zoom
+        view_h = layout.map_rect.h / zoom
+        view_rect = pygame.Rect(
+            layout.map_rect.centerx - view_w / 2 - offset.x,
+            layout.map_rect.centery - view_h / 2 - offset.y,
+            view_w,
+            view_h,
+        )
+
         # header
         draw_panel(self.screen, layout.header)
-        # у туториала в названии уже есть слово «дело» — не дублируем
         raw_title = self.current_case["title"].upper()
         title_text = raw_title if "ДЕЛО" in raw_title else f"ДЕЛО: {raw_title}"
         case_title = font_title.render(title_text, True, COLOR_ACCENT)
@@ -2074,63 +2211,74 @@ class Game:
                     self.timeline_selected = None
                     self.timeline_message = ""
                     if timeline.available(self.current_case) and not timeline.is_solved(
-                        self.state, self.current_case
+                        self.current_case, self.state
                     ):
-                        # перед обвинением — реконструкция; её можно пропустить
                         self.screen_name = "timeline"
                     else:
                         self.screen_name = "accusation"
 
-        # карта дела — художественная карта-картинка (assets/images/maps/…)
-        self._draw_case_map(layout.map_rect)
+        # карта дела с панорамой и зумом
+        self._draw_case_map(layout.map_rect, view_rect, zoom)
 
-        # локации: позиции берём из макета — те же, по которым ловим клики
+        # локации: пины преобразуются из координат макета в экранные с учётом панорамы/зума
         avail = self.get_available_locations()
+        pin_r = int(18 * zoom)
         for loc, pin_rect in zip(self.current_case["locations"], layout.pins, strict=False):
             if loc["id"] not in avail:
+                continue
+            screen_pos = self._map_pin_screen_pos(layout, pin_rect.center, offset, zoom)
+            # не рисуем пины за пределами viewport (с запасом)
+            if (
+                screen_pos.x < layout.map_rect.left - pin_r
+                or screen_pos.x > layout.map_rect.right + pin_r
+                or screen_pos.y < layout.map_rect.top - pin_r
+                or screen_pos.y > layout.map_rect.bottom + pin_r
+            ):
                 continue
             visited = loc["id"] in self.state.visited_locations
             draw_map_pin(
                 self.screen,
-                pin_rect.center,
+                (int(screen_pos.x), int(screen_pos.y)),
                 loc,
                 visited=visited,
                 current=(loc["id"] == self.location_id),
             )
             if not worldtime.is_open_now(loc, self.state.case_time_minutes):
-                badge = (pin_rect.right - 4, pin_rect.y + 2)
-                pygame.draw.circle(self.screen, (14, 16, 24), badge, 9)
-                pygame.draw.circle(self.screen, (170, 150, 90), badge, 9, 1)
-                pygame.draw.line(self.screen, (200, 180, 110), (badge[0], badge[1]), (badge[0], badge[1] - 5), 2)
-                pygame.draw.line(self.screen, (200, 180, 110), (badge[0], badge[1]), (badge[0] + 4, badge[1] + 2), 2)
+                badge_r = int(9 * zoom)
+                badge_x = screen_pos.x + 18 * zoom - 4
+                badge_y = screen_pos.y - 18 * zoom + 2
+                pygame.draw.circle(self.screen, (14, 16, 24), (int(badge_x), int(badge_y)), badge_r)
+                pygame.draw.circle(self.screen, (170, 150, 90), (int(badge_x), int(badge_y)), badge_r, 1)
+                pygame.draw.line(self.screen, (200, 180, 110), (badge_x, badge_y - 5), (badge_x, badge_y), 2)
+                pygame.draw.line(self.screen, (200, 180, 110), (badge_x, badge_y), (badge_x + 4, badge_y + 2), 2)
 
-        # кнопки на карте: «ЖДАТЬ» и «СЛЕЖКА»
+        # кнопки на карте: ЖДАТЬ и СЛЕЖКА (не трансформируются)
         action_y = layout.map_rect.y + 10
         tail_ready = surveillance.available(self.current_case, self.state)
         tail_rect = pygame.Rect(layout.map_rect.right - 208, action_y, 96, 26)
         wait_rect = pygame.Rect(layout.map_rect.right - 104, action_y, 96, 26)
-        for rect, label, enabled, action in (
+        for rect_btn, label, enabled, action in (
             (tail_rect, "СЛЕЖКА", tail_ready, "tail"),
             (wait_rect, "ЖДАТЬ", True, "wait"),
         ):
-            hovered = rect.collidepoint(mouse) and enabled
+            hovered = rect_btn.collidepoint(mouse) and enabled
             pygame.draw.rect(
                 self.screen,
                 (52, 46, 32) if hovered else (16, 18, 26),
-                rect,
+                rect_btn,
                 border_radius=6,
             )
             pygame.draw.rect(
                 self.screen,
                 COLOR_ACCENT if enabled else (60, 60, 70),
-                rect,
+                rect_btn,
                 width=1,
                 border_radius=6,
             )
             chip = get_font(10, bold=True).render(
                 label, True, COLOR_ACCENT if enabled else COLOR_TEXT_DARK
             )
-            self.screen.blit(chip, chip.get_rect(center=rect.center))
+            self.screen.blit(chip, chip.get_rect(center=rect_btn.center))
         self.map_action_rects = {"tail": tail_rect, "wait": wait_rect}
         if tail_rect.collidepoint(mouse) and pressed and self._click_once():
             if tail_ready and surveillance_view.start(self):
@@ -2139,32 +2287,35 @@ class Game:
             if surveillance.blocked(self.current_case, self.state):
                 self.add_notification(surveillance.block_text(self.current_case, self.state))
             else:
-                self.add_notification("Сначала найдите зацепку (улику) для слежки")
+                self.add_notification("Сначала захватку (улику) для слежки")
         if wait_rect.collidepoint(mouse) and pressed and self._click_once():
             location, wait = worldtime.nearest_opening(self.current_case, self.state)
             if not wait:
                 wait = 60
-                self.add_notification("Все локации открыты. Вы ждёте час.")
+                self.add_notification("Все локации открыты. Ждете час.")
             else:
                 self.add_notification(
-                    f"Вы ждёте до открытия «{location['name']}» — {wait} мин."
+                    f"Ждете до открытия «{location['name']}» — {wait} мин."
                 )
             worldtime.advance(self.state, wait)
             save_game(self.state)
             pygame.time.wait(120)
 
         hint = font_small.render(
-            "Нажмите на локацию, чтобы посетить. Серые — недоступны, пока не найдёте зацепку. "
-            "Часы работы — на пинах.",
+            "Нажмите на локацию, чтобы посетить. Серые — недоступны, пока не найдете захватку. Часы работы — на пинах. ПРАВАЯ КНОПКА — панорама, колесок — зум.",
             True,
             COLOR_TEXT_DIM,
         )
         self.screen.blit(hint, (layout.hint.x, layout.hint.y))
 
+        # индикатор зума
+        zoom_txt = font_small.render(f"Зум: {zoom:.1f}x", True, COLOR_TEXT_DIM)
+        self.screen.blit(zoom_txt, (layout.map_rect.right - zoom_txt.get_width() - 8, layout.map_rect.bottom - 26))
+
         # правая панель — журнал детектива
         right = layout.right
         draw_panel(self.screen, right)
-        r_title = get_font(14, bold=True).render("ЖУРНАЛ ДЕТЕКТИВА", True, COLOR_ACCENT)
+        r_title = get_font(14, bold=True).render("ЖУРНАЛ ДЕТЕКИВА", True, COLOR_ACCENT)
         self.screen.blit(r_title, (right.x + 15, right.y + 15))
         av = next((a for a in AVATARS if a["id"] == self.state.detective.avatar_id), AVATARS[0])
         avatar_rect = pygame.Rect(right.x + 15, right.y + 40, 50, 50)
@@ -2203,30 +2354,17 @@ class Game:
                 t = font_clue.render(clue["title"][:24], True, COLOR_TEXT)
                 self.screen.blit(t, (right.x + 40, y + 7))
                 y += 36
-                if y > layout.btn_menu.y - 124:
+                if y > right.bottom - 80:
                     break
-        prog_rect = pygame.Rect(right.x + 15, layout.btn_menu.y - 106, right.w - 30, 8)
-        pygame.draw.rect(self.screen, (40, 40, 50), prog_rect, border_radius=4)
-        progress = len(self.state.collected_clues) / max(1, len(self.current_case["clues"]))
-        pygame.draw.rect(
-            self.screen,
-            COLOR_ACCENT,
-            (prog_rect.x, prog_rect.y, int(prog_rect.w * progress), prog_rect.h),
-            border_radius=4,
-        )
-        prog_text = get_font(10).render(
-            f"Прогресс расследования: {int(progress * 100)}%", True, COLOR_TEXT_DIM
-        )
-        self.screen.blit(prog_text, (right.x + 15, prog_rect.y - 15))
 
-        # повтор катсцены «как всё было»
+        # wiederholение катсцены «как всё было»
         has_cut = cutscene_for(str((self.current_case or {}).get("id", ""))) is not None
         cut_rect = self._cutscene_replay_rect(layout)
         btn_cut = Button(
             cut_rect,
-            "▶ КАК ВСЁ БЫЛО",
+            "► КАК ВСЕ БЫЛО",
             enabled=has_cut,
-            tooltip="Посмотреть вступление дела ещё раз",
+            tooltip="Посмотреть вступление дела еще раз",
         )
         btn_cut.update(mouse, pressed)
         btn_cut.draw(self.screen, get_font(10, bold=True))
