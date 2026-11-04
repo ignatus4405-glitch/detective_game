@@ -797,13 +797,13 @@ class Game:
             self.audio.play_sfx("click")
         if self.screen_name == "alibi":
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                alibi_view.handle_click(self, self._to_logical(event.pos))
+                alibi_view.handle_click(self, event.pos)
             else:
                 alibi_view.handle_key(self, event)
             return
         if self.screen_name == "proof":
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                proof_view.handle_click(self, self._to_logical(event.pos))
+                proof_view.handle_click(self, event.pos)
             else:
                 proof_view.handle_key(self, event)
             return
@@ -815,7 +815,7 @@ class Game:
             return
         if self.screen_name == "riddle":
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                handle_riddle_click(self, self._to_logical(event.pos))
+                handle_riddle_click(self, event.pos)
             elif handle_riddle_key(self, event):
                 pass
             return
@@ -917,7 +917,7 @@ class Game:
                     self.selected_bg = BACKGROUNDS[bg_idx]["id"]
         elif self.screen_name == "case_select":
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                pos = self._to_logical(event.pos)
+                pos = event.pos  # run() already translated the event to logical coordinates
                 rects = self.case_select_rects or {}
                 if rects.get("back") and rects["back"].collidepoint(pos):
                     self.screen_name = "menu"
